@@ -10,4 +10,5 @@
 
 add_subdirectory(core)
 add_subdirectory(physics)
+add_subdirectory(render)
 # add_subdirectory(sim)       # coming with the world and spacecraft
