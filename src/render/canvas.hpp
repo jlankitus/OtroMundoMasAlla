@@ -100,6 +100,22 @@ enum class ColourDepth : std::uint8_t {
     TrueColour,
 };
 
+/// Whether the terminal can be trusted with a multi-byte glyph.
+///
+/// This is a SEPARATE capability from colour, and conflating them was a bug.
+/// A Windows console honours 24-bit colour escapes perfectly well while still
+/// decoding output as code page 437, in which case the three bytes of U+2580
+/// arrive as three Latin-1 characters and the display is destroyed.
+enum class BlockStyle : std::uint8_t {
+    /// U+2580, two square pixels per cell. Full vertical resolution, needs the
+    /// console to be in UTF-8.
+    HalfBlocks,
+    /// A space with a background colour: one pixel per cell, so the two pixel
+    /// rows are averaged. Half the vertical resolution and works on literally
+    /// any terminal, because a space is a space everywhere.
+    FullCells,
+};
+
 class Canvas {
 public:
     /// Dimensions are in CHARACTER CELLS. The pixel buffer is twice as tall.
@@ -169,10 +185,13 @@ public:
     /// Compose the frame into \p out for a single write.
     ///
     /// \param depth       how much colour to emit.
+    /// \param blocks      whether to use the half-block glyph. See BlockStyle.
     /// \param homeCursor  emit cursor-home and per-line erase. On for the live
     ///                    loop, off for a one-shot snapshot that should be
     ///                    plain text.
-    void present(std::string& out, ColourDepth depth, bool homeCursor) const;
+    void present(std::string& out, ColourDepth depth,
+                 BlockStyle blocks = BlockStyle::HalfBlocks,
+                 bool homeCursor = true) const;
 
 private:
     struct Cell {

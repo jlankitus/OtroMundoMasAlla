@@ -158,7 +158,25 @@ a pixel renderer that produces a blank rectangle without colour is a renderer
 that has stopped being tested.
 
 `--tilt DEG` and `--spin DEG` set the camera; `90` is top-down, `30` is the
-2:1 dimetric projection RollerCoaster Tycoon uses.
+2:1 dimetric projection RollerCoaster Tycoon uses. `--blocks full` drops to one
+pixel per cell for terminals that cannot decode UTF-8.
+
+## Render QA
+
+Unit tests check `Canvas` and `Camera` in isolation. They cannot check the thing
+that actually breaks: whether the *bytes the terminal receives* are valid and
+self-consistent once a whole scene has been composed.
+
+```bash
+python tools/qa_render.py ./build/windows/bin/Release/omma-ascii --png-dir /tmp/shots
+```
+
+Drives the real binary across thirteen option combinations and asserts the
+output decodes as UTF-8, has exactly the requested cell geometry, contains only
+escapes we deliberately emit, closes its SGR state, and stays inside a size
+budget. With `--png-dir` it also parses each frame back into a PNG via
+`tools/ansi_to_png.py`, so the frames can be looked at without a terminal — which
+is how three of the four bugs in this pass were found.
 
 The headless driver prints the solar system as a table, plus a live
 demonstration of the clock, time warp and determinism machinery:

@@ -35,11 +35,22 @@
 
 namespace omma::render {
 
-/// Where a projected point landed, and whether it is worth drawing.
+/// Where a projected point landed.
+///
+/// THREE STATES, NOT TWO. An earlier version returned {0, 0, false} for
+/// anything too far away to represent, which quietly broke line drawing: the
+/// top-left corner is a perfectly valid coordinate, so every distant orbit grew
+/// a spurious segment running to it. Off-screen and unrepresentable are
+/// different things and need different answers.
 struct ScreenPoint {
     int  x{0};
     int  y{0};
+    /// Inside the viewport.
     bool onScreen{false};
+    /// Representable at all. False only for non-finite world coordinates.
+    /// When true but onScreen is false, x and y are still meaningful and a
+    /// clipped line through this point is correct to draw.
+    bool valid{false};
 };
 
 class Camera {

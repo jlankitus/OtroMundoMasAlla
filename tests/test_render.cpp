@@ -24,6 +24,7 @@ using Catch::Matchers::WithinRel;
 using omma::Vec3;
 using omma::render::Camera;
 using omma::render::Canvas;
+using omma::render::BlockStyle;
 using omma::render::ColourDepth;
 using omma::render::Ink;
 using omma::render::Rgb;
@@ -218,6 +219,61 @@ TEST_CASE("line hits both endpoints and stays connected", "[render][canvas]") {
     }
 }
 
+TEST_CASE("a chord whose BOTH endpoints are off-screen still gets drawn",
+          "[render][canvas][regression]") {
+    // The bug that made every orbit larger than the viewport render as dashes.
+    //
+    // Both endpoints of this segment are outside the canvas, but the segment
+    // passes straight through the middle of it. The original code skipped any
+    // segment with no on-screen endpoint, and an ellipse wider than the view
+    // consists almost entirely of such chords -- so all that survived were a few
+    // fragments near the edges.
+    Canvas canvas{40, 20};
+    canvas.line(-50, 20, 90, 20, Rgb{255, 255, 255});
+
+    int lit = 0;
+    for (int x = 0; x < canvas.pixelWidth(); ++x) {
+        if (!(canvas.pixelAt(x, 20) == omma::render::kBlack)) {
+            ++lit;
+        }
+    }
+    INFO("lit pixels along the crossing row: " << lit);
+    REQUIRE(lit == canvas.pixelWidth());   // the whole row, edge to edge
+}
+
+TEST_CASE("clipping keeps a diagonal chord continuous", "[render][canvas][regression]") {
+    // The diagonal case, where a naive clip that only adjusts one endpoint
+    // leaves a gap or a kink.
+    Canvas canvas{60, 30};
+    canvas.line(-100, -100, 160, 160, Rgb{255, 255, 255});
+
+    // Every row the diagonal crosses must have at least one lit pixel.
+    for (int y = 0; y < canvas.pixelHeight(); ++y) {
+        bool anyLit = false;
+        for (int x = 0; x < canvas.pixelWidth(); ++x) {
+            if (!(canvas.pixelAt(x, y) == omma::render::kBlack)) {
+                anyLit = true;
+                break;
+            }
+        }
+        INFO("row " << y);
+        REQUIRE(anyLit);
+    }
+}
+
+TEST_CASE("a segment entirely outside the viewport draws nothing",
+          "[render][canvas]") {
+    Canvas canvas{20, 10};
+    canvas.line(-50, -50, -10, -10, Rgb{255, 0, 0});
+    canvas.line(100, 5, 200, 8, Rgb{255, 0, 0});
+
+    for (int y = 0; y < canvas.pixelHeight(); ++y) {
+        for (int x = 0; x < canvas.pixelWidth(); ++x) {
+            REQUIRE(canvas.pixelAt(x, y) == omma::render::kBlack);
+        }
+    }
+}
+
 TEST_CASE("a line from far off-screen terminates", "[render][canvas]") {
     // Orbits are drawn from projected coordinates, which can legitimately be
     // enormous when zoomed in. Without an iteration budget, Bresenham would
@@ -245,6 +301,57 @@ TEST_CASE("disc always lights at least one pixel", "[render][canvas]") {
         REQUIRE_FALSE(big.pixelAt(22, 22) == omma::render::kBlack);
         REQUIRE(big.pixelAt(24, 24) == omma::render::kBlack);   // outside
     }
+}
+
+TEST_CASE("a radius-1 disc is a plus, not a 3x3 square",
+          "[render][canvas][regression]") {
+    // The bug that made every body in the scene look like a chunky block.
+    //
+    // disc() used dx^2 + dy^2 <= r^2 + r, intending to round the boundary
+    // outward so small discs read as round rather than as diamonds. At radius 1
+    // that admits (+-1, +-1), because 1 + 1 <= 1 + 1 -- a solid 3x3 square. And
+    // radius 1 is what almost every body gets at almost every zoom, so the
+    // entire solar system rendered as squares.
+    Canvas canvas{20, 10};
+    canvas.disc(10, 10, 1, Rgb{255, 255, 255});
+
+    const auto lit = [&](int x, int y) {
+        return !(canvas.pixelAt(x, y) == omma::render::kBlack);
+    };
+
+    REQUIRE(lit(10, 10));                                  // centre
+    REQUIRE(lit(9, 10)); REQUIRE(lit(11, 10));             // horizontal arms
+    REQUIRE(lit(10, 9)); REQUIRE(lit(10, 11));             // vertical arms
+    REQUIRE_FALSE(lit(9, 9));                              // corners stay dark
+    REQUIRE_FALSE(lit(11, 9));
+    REQUIRE_FALSE(lit(9, 11));
+    REQUIRE_FALSE(lit(11, 11));
+}
+
+TEST_CASE("full-cell mode emits no multi-byte glyphs",
+          "[render][canvas][regression]") {
+    // The fallback for a console that cannot be put into UTF-8. Half blocks are
+    // three bytes each; on code page 437 they arrive as three Latin-1 characters
+    // and the display is destroyed. This mode averages the two pixel rows and
+    // emits a space with a background colour instead: half the vertical
+    // resolution, and it works on any terminal ever made.
+    Canvas canvas{6, 2};
+    canvas.setPixel(0, 0, Rgb{255, 0, 0});
+    canvas.setPixel(0, 1, Rgb{0, 0, 255});      // halves differ, so half-block
+                                                // mode would use U+2580 here
+
+    std::string half;
+    canvas.present(half, ColourDepth::TrueColour, BlockStyle::HalfBlocks, false);
+    REQUIRE(half.find("\xE2\x96\x80") != std::string::npos);
+
+    std::string full;
+    canvas.present(full, ColourDepth::TrueColour, BlockStyle::FullCells, false);
+    REQUIRE(full.find("\xE2\x96\x80") == std::string::npos);
+    for (const char c : full) {
+        REQUIRE(static_cast<unsigned char>(c) < 0x80);   // pure ASCII bytes
+    }
+    // ...and the averaged colour is there as a background.
+    REQUIRE(full.find("\033[48;2;127;0;127m") != std::string::npos);
 }
 
 TEST_CASE("glow falls off with distance and never wraps", "[render][canvas]") {
@@ -283,7 +390,8 @@ TEST_CASE("ASCII presentation turns brightness into density", "[render][canvas]"
     canvas.setPixel(3, 0, Rgb{255, 255, 255});
 
     std::string out;
-    canvas.present(out, ColourDepth::Ascii, /*homeCursor=*/false);
+    canvas.present(out, ColourDepth::Ascii, BlockStyle::HalfBlocks,
+                   /*homeCursor=*/false);
 
     REQUIRE(out.size() == 4);
     REQUIRE(out.find('\033') == std::string::npos);
@@ -302,7 +410,8 @@ TEST_CASE("characters override the pixels beneath them", "[render][canvas]") {
     canvas.put(0, 0, 'X');
 
     std::string out;
-    canvas.present(out, ColourDepth::Ascii, /*homeCursor=*/false);
+    canvas.present(out, ColourDepth::Ascii, BlockStyle::HalfBlocks,
+                   /*homeCursor=*/false);
     REQUIRE(out[0] == 'X');
 }
 
@@ -319,7 +428,8 @@ TEST_CASE("true colour presentation emits half blocks only where halves differ",
     canvas.setPixel(1, 1, Rgb{0, 0, 200});
 
     std::string out;
-    canvas.present(out, ColourDepth::TrueColour, /*homeCursor=*/false);
+    canvas.present(out, ColourDepth::TrueColour, BlockStyle::HalfBlocks,
+                   /*homeCursor=*/false);
 
     REQUIRE(out.find("\033[48;2;10;20;30m ") != std::string::npos);
     REQUIRE(out.find("\033[38;2;200;0;0m") != std::string::npos);
@@ -336,7 +446,8 @@ TEST_CASE("a uniform field emits one colour escape, not one per cell",
     }
 
     std::string out;
-    canvas.present(out, ColourDepth::TrueColour, /*homeCursor=*/false);
+    canvas.present(out, ColourDepth::TrueColour, BlockStyle::HalfBlocks,
+                   /*homeCursor=*/false);
 
     // 400 cells. Without run compression that would be 400 colour escapes; with
     // it, one per row plus the resets.
@@ -578,6 +689,39 @@ TEST_CASE("points outside the viewport are reported off-screen", "[render][camer
     REQUIRE_FALSE(camera.project(Vec3{1.0e15, 0.0, 0.0}).onScreen);
     REQUIRE_FALSE(camera.project(Vec3{0.0, -1.0e15, 0.0}).onScreen);
     REQUIRE(camera.project(Vec3::zero()).onScreen);
+}
+
+TEST_CASE("an unrepresentably distant point is clamped, not collapsed to the origin",
+          "[render][camera][regression]") {
+    // The third bug behind the dashed orbits.
+    //
+    // project() used to return {0, 0, false} for anything beyond its safe cast
+    // range. But (0, 0) is the top-left CORNER -- a perfectly valid coordinate --
+    // so a line drawn to such a point ran diagonally across the screen to the
+    // corner instead of off the edge in the direction it was actually heading.
+    //
+    // Clamping preserves the direction, which is what a clipped line needs.
+    Camera camera{80, 24};
+    camera.setElevation(Camera::kTopDownElevation);
+    camera.setCentre(Vec3::zero());
+    camera.setScale(1.0);          // one metre per row: everything is far away
+
+    const auto right = camera.project(Vec3{1.0e300, 0.0, 0.0});
+    const auto left = camera.project(Vec3{-1.0e300, 0.0, 0.0});
+    const auto up = camera.project(Vec3{0.0, 1.0e300, 0.0});
+
+    REQUIRE(right.valid);
+    REQUIRE_FALSE(right.onScreen);
+    REQUIRE(right.x > 80);              // off the RIGHT edge, not at the origin
+    REQUIRE(left.x < 0);                // off the LEFT edge
+    REQUIRE(up.y < 0);                  // off the TOP edge
+
+    SECTION("but a non-finite coordinate is reported invalid") {
+        const auto bad = camera.project(
+            Vec3{std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0});
+        REQUIRE_FALSE(bad.valid);
+        REQUIRE_FALSE(bad.onScreen);
+    }
 }
 
 TEST_CASE("the projection refuses to produce undefined behaviour",

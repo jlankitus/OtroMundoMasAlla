@@ -57,6 +57,7 @@ using omma::constants::kAu;
 using omma::constants::kSecondsPerDay;
 using omma::render::Camera;
 using omma::render::Canvas;
+using omma::render::BlockStyle;
 using omma::render::ColourDepth;
 using omma::render::Ink;
 using omma::render::Rgb;
@@ -151,6 +152,22 @@ void drawOrbit(Canvas& canvas, const Camera& camera,
         return;
     }
 
+    // Cull orbits that carry no information at this zoom.
+    //
+    // Zoomed in on the Earth-Moon system, Earth's own heliocentric orbit is 125
+    // times wider than the view, so it renders as a straight diagonal line
+    // across the screen: correct, and pure noise. Zoomed out to Neptune, the
+    // Moon's orbit is a hundredth of a pixel.
+    //
+    // Note the generous upper bound. An orbit a few times wider than the view
+    // still shows as a curving arc that tells you where the next planet out is,
+    // and those arcs are worth keeping -- so this culls the useless extremes
+    // rather than everything that does not fit.
+    const double viewSpan = camera.viewWidthMetres();
+    if (a > viewSpan * 25.0 || a < camera.metresPerRow() * 1.5) {
+        return;
+    }
+
     // Perifocal-to-reference rotation, computed once for the whole ellipse.
     // Full 3x3 this time, not the 2x2 the top-down view got away with: a
     // tilted camera needs the z component, and that z component is the entire
@@ -186,7 +203,16 @@ void drawOrbit(Canvas& canvas, const Camera& camera,
                                parentOrigin.z + m31 * xp + m32 * yp};
 
         const auto point = camera.project(world);
-        if (havePrevious && (point.onScreen || previous.onScreen)) {
+        // Draw whenever BOTH endpoints are representable, regardless of whether
+        // either is on screen, and let Canvas::line clip the segment.
+        //
+        // The previous condition was `point.onScreen || previous.onScreen`,
+        // which silently dropped every chord whose two endpoints straddle the
+        // viewport -- so any orbit larger than the view rendered as a handful of
+        // dashes near the edges. Clipping is the renderer's job, not the
+        // caller's; asking "is this visible" at the call site gets it wrong for
+        // exactly the segments that matter most.
+        if (havePrevious && point.valid && previous.valid) {
             canvas.line(previous.x, previous.y, point.x, point.y, colour);
         }
         previous = point;
@@ -328,12 +354,16 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
     const int h = canvas.height();
     const Epoch t = clock.now();
     const auto& focus = system[static_cast<BodyId>(view.focusIndex)];
+    const auto* kepler = dynamic_cast<const omma::KeplerEphemeris*>(&focus);
 
     // Clear the strips the HUD occupies. Pixels showing through between the
     // letters turns a readout into noise.
     canvas.fill(0, 0, canvas.width(), 1);
     canvas.fill(0, h - 2, canvas.width(), 2);
-    canvas.fill(0, 2, 27, 11);
+    // Only as many rows as the panel actually writes. Blanking a fixed 11 rows
+    // took a visible rectangular bite out of the scene even when the focused
+    // body was the Sun and the panel used two of them.
+    canvas.fill(0, 2, 27, kepler != nullptr ? 10 : 2);
 
     char line[256];
     std::snprintf(line, sizeof(line), " %s   %s ",
@@ -365,7 +395,6 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
                 Ink::BrightBlack);
 
     // ── focus panel ─────────────────────────────────────────────────────────
-    const auto* kepler = dynamic_cast<const omma::KeplerEphemeris*>(&focus);
     int row = 2;
     canvas.text(1, row++, focus.name(), Ink::BrightWhite);
     if (kepler != nullptr) {
@@ -537,6 +566,8 @@ void handleKey(int key, ViewState& view, Camera& camera, const SolarSystem& syst
 struct Options {
     bool        snapshot{false};
     ColourDepth depth{ColourDepth::TrueColour};
+    BlockStyle  blocks{BlockStyle::HalfBlocks};
+    bool        blocksForced{false};
     int         columns{0};
     int         rows{0};
     std::size_t zoomPreset{3};
@@ -554,6 +585,7 @@ void printUsage() {
         "  (no arguments)      run interactively\n"
         "  --snapshot          render one frame to stdout and exit\n"
         "  --colour MODE       truecolour (default), ansi16, or ascii\n"
+        "  --blocks MODE       half (default; needs a UTF-8 console) or full\n"
         "  --size WxH          override the terminal size, in character cells\n"
         "  --zoom N            zoom preset 1-5 (Earth-Moon .. everything)\n"
         "  --focus NAME        centre on a body, e.g. Earth\n"
@@ -583,6 +615,12 @@ bool parseOptions(int argc, char** argv, Options& out) {
                    return false; }
         } else if (arg == "--no-colour" || arg == "--no-color") {
             out.depth = ColourDepth::Ascii;
+        } else if (arg == "--blocks") {
+            const std::string mode = next();
+            if (mode == "half")      out.blocks = BlockStyle::HalfBlocks;
+            else if (mode == "full") out.blocks = BlockStyle::FullCells;
+            else { std::fprintf(stderr, "--blocks wants half or full\n"); return false; }
+            out.blocksForced = true;
         } else if (arg == "--size") {
             const std::string value = next();
             const auto x = value.find('x');
@@ -648,6 +686,10 @@ Camera makePixelCamera(const Canvas& canvas, const Options& options) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Before anything is written. A renderer that controls the cursor has to
+    // control the bytes; see the declaration for what text mode does to them.
+    con::useBinaryStdout();
+
     Options options{};
     if (!parseOptions(argc, argv, options)) {
         return 2;
@@ -676,9 +718,10 @@ int main(int argc, char** argv) {
         // --colour a lie.
         if (options.depth != ColourDepth::Ascii) {
             con::enableAnsi();
+            con::enableUtf8Output();
         }
         std::string frame;
-        canvas.present(frame, options.depth, /*homeCursor=*/false);
+        canvas.present(frame, options.depth, options.blocks, /*homeCursor=*/false);
         std::fwrite(frame.data(), 1, frame.size(), stdout);
         std::fputc('\n', stdout);
         return 0;
@@ -693,6 +736,17 @@ int main(int argc, char** argv) {
                      "  omma-ascii --snapshot\n"
                      "for a single frame you can redirect.\n");
         return 1;
+    }
+
+    // Half blocks are three UTF-8 bytes each. If the console cannot be put into
+    // UTF-8, emitting them yields ten thousand copies of garbage per frame, so
+    // fall back to one pixel per cell -- half the vertical resolution, and works
+    // on any terminal ever made, because a space is a space everywhere.
+    //
+    // An explicit --blocks always wins: the user can see their own terminal and
+    // we are only inferring.
+    if (!options.blocksForced && !con::supportsUtf8()) {
+        options.blocks = BlockStyle::FullCells;
     }
 
     omma::SimClock clock{std::chrono::seconds{1}, Epoch::fromCivil(options.date)};
@@ -749,7 +803,7 @@ int main(int argc, char** argv) {
         const auto drawStart = Clock::now();
         render(canvas, camera, system, clock, view, smoothedFps, clamped, timings);
         const auto presentStart = Clock::now();
-        canvas.present(frameBuffer, options.depth, /*homeCursor=*/true);
+        canvas.present(frameBuffer, options.depth, options.blocks, /*homeCursor=*/true);
         const auto writeStart = Clock::now();
         std::fwrite(frameBuffer.data(), 1, frameBuffer.size(), stdout);
         std::fflush(stdout);

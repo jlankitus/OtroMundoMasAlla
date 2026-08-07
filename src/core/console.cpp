@@ -8,6 +8,7 @@
 #  define WIN32_LEAN_AND_MEAN
 #  define NOMINMAX
 #  include <conio.h>
+#  include <fcntl.h>
 #  include <io.h>
 #  include <windows.h>
 #else
@@ -153,9 +154,51 @@ namespace {
 #if !defined(_WIN32)
 termios g_savedTermios{};
 bool g_termiosSaved = false;
+#else
+unsigned int g_savedOutputCodePage = 0;
 #endif
 
+bool g_utf8 = false;
+
 }  // namespace
+
+void useBinaryStdout() noexcept {
+#if defined(_WIN32)
+    // _O_BINARY stops the CRT translating '\n' into "\r\n" on the way out.
+    static_cast<void>(_setmode(_fileno(stdout), _O_BINARY));
+#endif
+}
+
+bool enableUtf8Output() noexcept {
+#if defined(_WIN32)
+    // THE BUG THIS FIXES
+    // The compiler's /utf-8 flag makes string literals UTF-8 in the binary. It
+    // says nothing about how the console INTERPRETS the bytes we write. A
+    // Windows console defaults to code page 437 or 1252 depending on locale, so
+    // the three bytes of U+2580 arrive as three separate Latin-1 characters and
+    // the entire display becomes "a-graveâ--EUR" repeated ten thousand times.
+    //
+    // This did not show up while the renderer emitted only ASCII. It appeared
+    // the moment half blocks did, which is a good argument for testing the
+    // presentation layer on a real console and not only through a pipe.
+    if (g_savedOutputCodePage == 0) {
+        g_savedOutputCodePage = GetConsoleOutputCP();
+    }
+    if (g_savedOutputCodePage == CP_UTF8) {
+        g_utf8 = true;
+        return true;
+    }
+    g_utf8 = SetConsoleOutputCP(CP_UTF8) != 0;
+    return g_utf8;
+#else
+    // Any POSIX terminal in this century is UTF-8, and if it is not, the locale
+    // says so rather than us guessing.
+    g_utf8 = true;
+    return true;
+#endif
+}
+
+bool supportsUtf8() noexcept { return g_utf8; }
 
 InteractiveSession::InteractiveSession() noexcept {
     if (!enableAnsi()) {
@@ -184,6 +227,7 @@ InteractiveSession::InteractiveSession() noexcept {
 #endif
 
     if (ok_) {
+        enableUtf8Output();
         // 1049 = alternate screen buffer, ?25l = hide cursor.
         std::fputs("\033[?1049h\033[?25l", stdout);
         std::fflush(stdout);
@@ -196,6 +240,15 @@ InteractiveSession::~InteractiveSession() noexcept {
     }
     std::fputs("\033[?25h\033[?1049l", stdout);
     std::fflush(stdout);
+
+#if defined(_WIN32)
+    // Put the code page back. Leaving a shell in UTF-8 when it started in 437
+    // silently breaks other programs the user runs afterwards, which is exactly
+    // the class of rudeness the raw-mode guard exists to avoid.
+    if (g_savedOutputCodePage != 0 && g_savedOutputCodePage != CP_UTF8) {
+        SetConsoleOutputCP(g_savedOutputCodePage);
+    }
+#endif
 
 #if !defined(_WIN32)
     if (g_termiosSaved) {
