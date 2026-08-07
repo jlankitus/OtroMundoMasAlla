@@ -1,0 +1,18 @@
+# Normalise line endings in the repository to LF, regardless of who commits
+# from which OS. Without this, a Windows checkout commits CRLF, a Linux CI
+# runner checks out CRLF, and any test that compares generated text output
+# against a fixture fails on exactly one platform for reasons unrelated to the
+# code. Cheap insurance; annoying to retrofit.
+
+* text=auto eol=lf
+
+# Scripts that Windows itself executes genuinely need CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Never let Git "helpfully" translate bytes in binary assets.
+*.png  binary
+*.jpg  binary
+*.bsp  binary
+*.bin  binary
