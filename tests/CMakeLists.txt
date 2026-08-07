@@ -28,6 +28,10 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(omma_tests
+    test_console.cpp
+    test_epoch.cpp
+    test_sim_clock.cpp
+    test_vec3.cpp
     test_version.cpp
 )
 

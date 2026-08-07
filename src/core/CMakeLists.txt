@@ -11,6 +11,9 @@ configure_file(
     @ONLY)
 
 add_library(omma_core
+    console.cpp
+    epoch.cpp
+    sim_clock.cpp
     version.cpp
 )
 add_library(omma::core ALIAS omma_core)
