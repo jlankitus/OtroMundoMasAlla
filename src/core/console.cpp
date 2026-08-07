@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -202,6 +203,46 @@ InteractiveSession::~InteractiveSession() noexcept {
         g_termiosSaved = false;
     }
 #endif
+}
+
+void sleepFor(std::chrono::nanoseconds duration) noexcept {
+    if (duration <= std::chrono::nanoseconds::zero()) {
+        return;
+    }
+
+#if defined(_WIN32)
+    // Created once and reused. Creating a timer per frame would add a kernel
+    // object allocation to every frame, which is exactly the sort of cost you
+    // introduce while fixing a performance problem.
+    static const HANDLE timer = [] {
+        HANDLE h = CreateWaitableTimerExW(nullptr, nullptr,
+                                          CREATE_WAITABLE_TIMER_MANUAL_RESET
+                                              | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                          TIMER_ALL_ACCESS);
+        if (h == nullptr) {
+            // Pre-1803 Windows rejects the high-resolution flag outright.
+            // A normal timer is no better than Sleep(), so signal "no timer"
+            // and let the portable path handle it.
+            h = nullptr;
+        }
+        return h;
+    }();
+
+    if (timer != nullptr) {
+        LARGE_INTEGER due{};
+        // Negative means relative, in 100-nanosecond units.
+        due.QuadPart = -(duration.count() / 100);
+        if (due.QuadPart == 0) {
+            due.QuadPart = -1;
+        }
+        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE) != 0) {
+            WaitForSingleObject(timer, INFINITE);
+            return;
+        }
+    }
+#endif
+
+    std::this_thread::sleep_for(duration);
 }
 
 int pollKey() noexcept {
