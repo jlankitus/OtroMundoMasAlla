@@ -9,5 +9,5 @@
 # immediately instead of six months later.
 
 add_subdirectory(core)
-# add_subdirectory(physics)   # commit 4
-# add_subdirectory(sim)       # commit 6
+add_subdirectory(physics)
+# add_subdirectory(sim)       # coming with the world and spacecraft
