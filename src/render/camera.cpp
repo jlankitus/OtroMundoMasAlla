@@ -110,21 +110,25 @@ ScreenPoint Camera::project(const Vec3& world) const noexcept {
     const double dy = -screenY / metresPerRow_;
 
     if (!std::isfinite(dx) || !std::isfinite(dy)) {
-        return ScreenPoint{0, 0, false};
+        return ScreenPoint{0, 0, /*onScreen=*/false, /*valid=*/false};
     }
 
-    // Guard the cast. A body far outside the view can exceed int range, and an
-    // out-of-range double-to-int conversion is undefined behaviour, not a large
-    // integer. The limit is generous enough that a line can still be clipped
-    // correctly from an off-screen endpoint.
+    // Guard the cast: an out-of-range double-to-int conversion is undefined
+    // behaviour, not a large integer.
+    //
+    // CLAMP, do not discard. The direction has to survive, because a line whose
+    // far endpoint is a million units off-screen still crosses the viewport and
+    // still has to be drawn. Returning a fixed sentinel here is what made
+    // distant orbits render as dashes with stray segments to the corner.
     constexpr double kLimit = 1.0e6;
-    if (std::abs(dx) > kLimit || std::abs(dy) > kLimit) {
-        return ScreenPoint{0, 0, false};
-    }
+    const double clampedX = std::clamp(dx, -kLimit, kLimit);
+    const double clampedY = std::clamp(dy, -kLimit, kLimit);
 
-    const int px = static_cast<int>(std::lround(dx)) + width_ / 2;
-    const int py = static_cast<int>(std::lround(dy)) + height_ / 2;
-    return ScreenPoint{px, py, px >= 0 && py >= 0 && px < width_ && py < height_};
+    const int px = static_cast<int>(std::lround(clampedX)) + width_ / 2;
+    const int py = static_cast<int>(std::lround(clampedY)) + height_ / 2;
+    return ScreenPoint{px, py,
+                       px >= 0 && py >= 0 && px < width_ && py < height_,
+                       /*valid=*/true};
 }
 
 double Camera::viewWidthMetres() const noexcept {

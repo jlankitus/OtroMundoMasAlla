@@ -174,34 +174,129 @@ Rgb Canvas::pixelAt(int px, int py) const noexcept {
     return containsPixel(px, py) ? pixels_[pixelIndex(px, py)] : kBlack;
 }
 
+namespace {
+
+// Cohen-Sutherland region codes.
+constexpr int kInside = 0;
+constexpr int kLeft   = 1;
+constexpr int kRight  = 2;
+constexpr int kBelow  = 4;
+constexpr int kAbove  = 8;
+
+[[nodiscard]] int regionCode(double x, double y, double maxX, double maxY) noexcept {
+    int code = kInside;
+    if (x < 0.0)       code |= kLeft;
+    else if (x > maxX) code |= kRight;
+    if (y < 0.0)       code |= kAbove;
+    else if (y > maxY) code |= kBelow;
+    return code;
+}
+
+/// Trim a segment to the viewport, in place. Returns false if it misses
+/// entirely.
+///
+/// WHY CLIPPING AND NOT AN ITERATION BUDGET
+/// The first version just capped how many Bresenham steps a segment could take,
+/// which bounded the cost but produced the wrong picture: a chord whose two
+/// endpoints are both off-screen was skipped even though it crosses the middle
+/// of the view. Every orbit larger than the viewport rendered as dashes.
+///
+/// Clipping fixes correctness and performance at once. Cohen-Sutherland trims
+/// against each edge in turn using the region codes, so afterwards the segment
+/// is guaranteed to lie inside and Bresenham can run unbounded.
+[[nodiscard]] bool clipToViewport(double& x0, double& y0, double& x1, double& y1,
+                                 double maxX, double maxY) noexcept {
+    int code0 = regionCode(x0, y0, maxX, maxY);
+    int code1 = regionCode(x1, y1, maxX, maxY);
+
+    // Bounded because each iteration eliminates at least one region bit, and
+    // there are only four. The cap is belt and braces against a pathological
+    // input producing a NaN comparison that never converges.
+    for (int guard = 0; guard < 8; ++guard) {
+        if ((code0 | code1) == kInside) {
+            return true;                       // wholly inside
+        }
+        if ((code0 & code1) != 0) {
+            return false;                      // wholly outside one edge
+        }
+
+        const int outside = code0 != kInside ? code0 : code1;
+        double x = 0.0;
+        double y = 0.0;
+
+        if ((outside & kBelow) != 0) {
+            x = x0 + (x1 - x0) * (maxY - y0) / (y1 - y0);
+            y = maxY;
+        } else if ((outside & kAbove) != 0) {
+            x = x0 + (x1 - x0) * (0.0 - y0) / (y1 - y0);
+            y = 0.0;
+        } else if ((outside & kRight) != 0) {
+            y = y0 + (y1 - y0) * (maxX - x0) / (x1 - x0);
+            x = maxX;
+        } else {
+            y = y0 + (y1 - y0) * (0.0 - x0) / (x1 - x0);
+            x = 0.0;
+        }
+
+        if (!std::isfinite(x) || !std::isfinite(y)) {
+            return false;
+        }
+
+        if (outside == code0) {
+            x0 = x;
+            y0 = y;
+            code0 = regionCode(x0, y0, maxX, maxY);
+        } else {
+            x1 = x;
+            y1 = y;
+            code1 = regionCode(x1, y1, maxX, maxY);
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
 void Canvas::line(int x0, int y0, int x1, int y1, Rgb colour) noexcept {
-    // Bresenham, integer only. The all-octants form: no special cases for
-    // steep versus shallow, no floating point, and therefore no possibility of
-    // a rounding difference between platforms showing up as a different
-    // picture. That matters here because snapshots are compared byte for byte.
-    int dx = std::abs(x1 - x0);
-    int dy = -std::abs(y1 - y0);
-    const int sx = x0 < x1 ? 1 : -1;
-    const int sy = y0 < y1 ? 1 : -1;
+    double cx0 = static_cast<double>(x0);
+    double cy0 = static_cast<double>(y0);
+    double cx1 = static_cast<double>(x1);
+    double cy1 = static_cast<double>(y1);
+
+    if (!clipToViewport(cx0, cy0, cx1, cy1,
+                        static_cast<double>(pixelWidth() - 1),
+                        static_cast<double>(pixelHeight() - 1))) {
+        return;
+    }
+
+    int ax = static_cast<int>(std::lround(cx0));
+    int ay = static_cast<int>(std::lround(cy0));
+    const int bx = static_cast<int>(std::lround(cx1));
+    const int by = static_cast<int>(std::lround(cy1));
+
+    // Bresenham, integer only, all-octants form: no special cases for steep
+    // versus shallow, and no floating point, so there is no possibility of a
+    // rounding difference between platforms showing up as a different picture.
+    // That matters because snapshots are compared byte for byte.
+    const int dx = std::abs(bx - ax);
+    const int dy = -std::abs(by - ay);
+    const int sx = ax < bx ? 1 : -1;
+    const int sy = ay < by ? 1 : -1;
     int error = dx + dy;
 
-    // Bound the iteration. A line whose endpoints are far outside the canvas
-    // would otherwise spend millions of iterations plotting nothing; callers
-    // pass projected coordinates, which can legitimately be huge.
-    const int budget = 4 * (pixelWidth() + pixelHeight()) + 8;
-    for (int i = 0; i < budget; ++i) {
-        setPixel(x0, y0, colour);
-        if (x0 == x1 && y0 == y1) {
+    for (;;) {
+        setPixel(ax, ay, colour);
+        if (ax == bx && ay == by) {
             return;
         }
         const int doubled = 2 * error;
         if (doubled >= dy) {
             error += dy;
-            x0 += sx;
+            ax += sx;
         }
         if (doubled <= dx) {
             error += dx;
-            y0 += sy;
+            ay += sy;
         }
     }
 }
@@ -211,13 +306,19 @@ void Canvas::disc(int cx, int cy, int radius, Rgb colour) noexcept {
         setPixel(cx, cy, colour);
         return;
     }
+    // Plain dx^2 + dy^2 <= r^2.
+    //
+    // An earlier version used <= r^2 + r, meaning to round the boundary
+    // outward so small discs read as round rather than as diamonds. At radius 1
+    // that admits (+-1, +-1), because 1 + 1 <= 1 + 1 -- so every body in the
+    // scene rendered as a solid 3x3 SQUARE. The fudge was worse than the
+    // problem it solved: at radius 1 the honest circle is a five-pixel plus,
+    // which reads as a point, and from radius 2 up the standard test is round
+    // already.
     const int rSquared = radius * radius;
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
-            // +radius in the test rounds the boundary outward, which reads as a
-            // disc rather than a diamond at the two- and three-pixel radii that
-            // most bodies actually occupy.
-            if (dx * dx + dy * dy <= rSquared + radius) {
+            if (dx * dx + dy * dy <= rSquared) {
                 setPixel(cx + dx, cy + dy, colour);
             }
         }
@@ -246,7 +347,8 @@ void Canvas::glow(int cx, int cy, int radius, Rgb colour) noexcept {
 
 // ─── output ──────────────────────────────────────────────────────────────────
 
-void Canvas::present(std::string& out, ColourDepth depth, bool homeCursor) const {
+void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
+                     bool homeCursor) const {
     out.clear();
     if (homeCursor) {
         out += "\033[H";
@@ -268,8 +370,21 @@ void Canvas::present(std::string& out, ColourDepth depth, bool homeCursor) const
     for (int cy = 0; cy < cellHeight_; ++cy) {
         for (int cx = 0; cx < cellWidth_; ++cx) {
             const Cell& cell = cells_[cellIndex(cx, cy)];
-            const Rgb top = pixels_[pixelIndex(cx, cy * 2)];
-            const Rgb bottom = pixels_[pixelIndex(cx, cy * 2 + 1)];
+            Rgb top = pixels_[pixelIndex(cx, cy * 2)];
+            Rgb bottom = pixels_[pixelIndex(cx, cy * 2 + 1)];
+
+            if (blocks == BlockStyle::FullCells) {
+                // Average the two rows and treat the cell as one pixel, so the
+                // top == bottom path below emits a plain space. Brighter of the
+                // two would lose thin features against the background; the
+                // average keeps a single-pixel orbit line visible as a dimmer
+                // cell rather than dropping it entirely.
+                const Rgb mean{static_cast<std::uint8_t>((top.r + bottom.r) / 2),
+                               static_cast<std::uint8_t>((top.g + bottom.g) / 2),
+                               static_cast<std::uint8_t>((top.b + bottom.b) / 2)};
+                top = mean;
+                bottom = mean;
+            }
 
             // A character in the cell wins over the pixels beneath it.
             if (cell.glyph != ' ') {

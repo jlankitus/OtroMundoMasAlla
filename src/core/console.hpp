@@ -85,6 +85,37 @@ private:
     bool ok_{false};
 };
 
+/// Put stdout into binary mode, so the bytes we write are the bytes that arrive.
+///
+/// On Windows stdout defaults to TEXT mode, which silently rewrites every '\n'
+/// as "\r\n". For a program emitting escape sequences that is corruption:
+///
+///   * a snapshot gains a stray '\r' on every row, so byte-comparing two frames
+///     compares the wrong thing
+///   * the live renderer deliberately writes "\r\n", which text mode expands to
+///     "\r\r\n" -- harmless on most terminals, and one wasted byte per row per
+///     frame forever
+///
+/// A renderer that controls the cursor needs to control the bytes. No-op on
+/// POSIX, where nobody ever thought this was a good idea.
+void useBinaryStdout() noexcept;
+
+/// Ask the console to interpret our output as UTF-8, and report whether it will.
+///
+/// Separate from enableAnsi() because they are genuinely separate capabilities:
+/// a console can honour colour escapes and still mangle multi-byte characters.
+///
+/// On Windows this is not optional. The compiler's /utf-8 flag makes string
+/// literals UTF-8 in the binary; it says nothing about how the console decodes
+/// the bytes. A console defaults to code page 437 or 1252, so the three bytes of
+/// U+2580 arrive as three Latin-1 characters and a half-block display becomes
+/// ten thousand copies of garbage. Called automatically by InteractiveSession,
+/// and restored on the way out.
+bool enableUtf8Output() noexcept;
+
+/// Result of the most recent enableUtf8Output(). False until it has been called.
+[[nodiscard]] bool supportsUtf8() noexcept;
+
 /// Read one key without blocking. Returns 0 when nothing is pending.
 ///
 /// Only reports plain ASCII. Arrow keys and function keys arrive as multi-byte

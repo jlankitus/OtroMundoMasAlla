@@ -23,18 +23,23 @@ struct BodyStyle {
     char        glyph;       ///< fallback for the character layer
 };
 
+// trailScale was first tuned against the ASCII density ramp, where 0.16 still
+// mapped to a visible '.'. In true colour the same value is rgb(27,26,25) --
+// indistinguishable from black. A brightness that reads correctly through one
+// presentation can be invisible through another, which is a good reason to look
+// at the actual output rather than trusting a number that "seemed fine".
 inline constexpr std::array<BodyStyle, static_cast<std::size_t>(BodyId::Count)> kBodyStyles{{
-    /* Sun     */ {{255, 236, 170}, 0.00, 4.0, '@'},
-    /* Mercury */ {{168, 162, 155}, 0.16, 0.0, 'm'},
-    /* Venus   */ {{234, 214, 172}, 0.18, 0.0, 'V'},
-    /* Earth   */ {{ 96, 148, 224}, 0.26, 0.0, 'E'},
-    /* Moon    */ {{198, 196, 188}, 0.20, 0.0, '.'},
-    /* Mars    */ {{198,  94,  58}, 0.22, 0.0, 'M'},
-    /* Jupiter */ {{212, 176, 132}, 0.22, 0.0, 'J'},
-    /* Saturn  */ {{226, 205, 152}, 0.20, 0.0, 'S'},
-    /* Uranus  */ {{146, 214, 222}, 0.20, 0.0, 'U'},
-    /* Neptune */ {{ 84, 118, 214}, 0.20, 0.0, 'N'},
-    /* Pluto   */ {{188, 174, 160}, 0.14, 0.0, 'p'},
+    /* Sun     */ {{255, 236, 170}, 0.00, 5.0, '@'},
+    /* Mercury */ {{168, 162, 155}, 0.42, 0.0, 'm'},
+    /* Venus   */ {{234, 214, 172}, 0.42, 0.0, 'V'},
+    /* Earth   */ {{ 96, 148, 224}, 0.60, 0.0, 'E'},
+    /* Moon    */ {{198, 196, 188}, 0.45, 0.0, '.'},
+    /* Mars    */ {{198,  94,  58}, 0.55, 0.0, 'M'},
+    /* Jupiter */ {{212, 176, 132}, 0.45, 0.0, 'J'},
+    /* Saturn  */ {{226, 205, 152}, 0.42, 0.0, 'S'},
+    /* Uranus  */ {{146, 214, 222}, 0.42, 0.0, 'U'},
+    /* Neptune */ {{ 84, 118, 214}, 0.50, 0.0, 'N'},
+    /* Pluto   */ {{188, 174, 160}, 0.38, 0.0, 'p'},
 }};
 
 [[nodiscard]] inline const BodyStyle& styleFor(std::size_t index) noexcept {
