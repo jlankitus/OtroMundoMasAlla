@@ -6,7 +6,12 @@
 # decision about which glyph a planet gets. Everything reusable is in
 # omma::render.
 
-add_executable(omma-ascii main.cpp)
+add_executable(omma-ascii
+    main.cpp
+    bodies.hpp
+)
+
+target_include_directories(omma-ascii PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(omma-ascii
     PRIVATE

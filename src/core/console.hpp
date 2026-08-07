@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
+#include <chrono>
 #include <string_view>
 
 namespace omma::console {
@@ -101,5 +102,24 @@ private:
 
 /// Erase from the cursor to the end of the screen. Used once after a resize.
 [[nodiscard]] std::string_view clearToEnd() noexcept;
+
+/// Sleep for approximately \p duration, as precisely as the OS allows.
+///
+/// WHY THIS EXISTS AND std::this_thread::sleep_for DOES NOT SUFFICE
+/// Windows' default system timer fires every 15.625 ms, and Sleep() rounds UP
+/// to the next tick. Ask for 28 ms and you get 31.25 ms, or 46.875 ms, never
+/// 28. A frame loop that sleeps the remainder of a 33.3 ms budget therefore
+/// produces frame times quantised to multiples of 15.6 ms, and a nominal
+/// 30 fps target settles at 21 or 27 fps depending on phase. The renderer
+/// looks slow; the renderer is fine.
+///
+/// The old fix is timeBeginPeriod(1), which raises the timer rate for the
+/// WHOLE MACHINE — every process, plus a measurable battery cost. Windows 10
+/// 1803 added CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, which gives roughly
+/// half-millisecond granularity to just this wait. We use that, and fall back
+/// to the portable sleep when it is unavailable.
+///
+/// On POSIX, nanosleep is already fine and this forwards straight to it.
+void sleepFor(std::chrono::nanoseconds duration) noexcept;
 
 }  // namespace omma::console

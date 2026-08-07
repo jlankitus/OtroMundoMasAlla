@@ -6,33 +6,37 @@ Real SI units. Real gravity. Planets propagated analytically, spacecraft
 integrated numerically, both behind one interface. Fixed timestep, seeded RNG,
 bit-reproducible runs. It renders in your terminal.
 
-> **Status:** `v0.1.0` — eleven bodies orbiting, in your terminal. No spacecraft yet.
+> **Status:** `v0.2.0` — eleven bodies orbiting on a tilted board, drawn with
+> truecolour half-block pixels. No spacecraft yet.
 
 ```
-                              ..................
-                         .....                 .....
-                       ...                         ....
-                    ...         .............         ...
-                   ..       .....           .....       ...
-                 ..       ...                   ...       ..
-                ..      ...                       ...      ..
-               ..      ..                           ...     ..
-              ..      ..          ........            ..     ..
-              .      ..        ....      ....          .      .
-             ..     ..        ..            .m Mercury ..     ..
-             .      .        ..               ..        .      .
-             .      .       ..        @ Sun    .        .      .
-             .      .       .                  .        .      .
-             ..     ..      ..                ..       ..      .
-              .      .       .               ..        .      ..
-              ..     ..       ..            ..        ..      .
-               .      ...      ....      ....       ...      .
-                .       ..        .......          ..       ..
-                 ..       ...                   ....      ...
-                  ..        .....           .....        ..
-                    ..          .....V.......          E..Moon
-                      ...                           ...
+                                                                                      ....
+ Sun                                                                                      ...
+   the frame origin                ..........................                                ..
+                           ........                          .........                         .
+                                     ..................               .....
+                              ........                 ........            ....
+                           ....                                .....           ...
+                                                                   ....           ...
+                                      ................                 ...          ..
+                                  .....              .....               ...         ...
+                                ...                      ...               ..          .
+                               ..             .%%%.         *** Mercury     ..          .
+        .          ..          .              .%%%.Sun      ***              .          .
+        .           ..         ..              ...           .               .         ..
+         .           ..         ..                          ..              ..         .
+         ..           ...        ...                      ...              ..        ..
+           ..           ...         .....              ....             ...         ..
+             ...           .....        ...............              ....        ...
+               ....            ....%%% Venus                    ......        ....
+                  .....            %%%...........................         ....
+                       .....                                   ###  ......                   ...
+.                           .........                       ...+++...                     ....
+ ....                                .......................   +++                     ...
 ```
+
+*2:1 dimetric, ASCII density mode. In a truecolour terminal these are shaded
+discs with a corona on the Sun.*
 
 ---
 
@@ -120,7 +124,7 @@ cmake --preset ci && cmake --build --preset ci && ctest --preset ci
 ## Running it
 
 ```bash
-./build/windows/bin/Debug/omma-ascii
+./build/windows/bin/Release/omma-ascii
 ```
 
 | key | |
@@ -129,7 +133,11 @@ cmake --preset ci && cmake --build --preset ci && ctest --preset ci
 | `-` `=` | time warp down / up, from real time to 20 years per second |
 | `[` `]` | zoom out / in |
 | `1`-`5` | zoom presets: Earth-Moon, inner system, to Jupiter, to Neptune, everything |
+| `r` `t` | tilt the board down / up |
+| `z` `x` | spin the board left / right |
+| `v` | snap between top-down and 2:1 dimetric |
 | `w a s d` | pan |
+| `f` | frame-timing breakdown |
 | `tab` / `p` | next / previous body to follow |
 | `c` | re-centre on the followed body |
 | `o` `l` | orbit trails, labels |
@@ -141,14 +149,22 @@ diffable, and something CI can assert against. A visual system that can only be
 checked by looking at it is a visual system nobody checks.
 
 ```bash
-./build/windows/bin/Debug/omma-ascii --snapshot --zoom 2 --focus Earth --date 2030-03-21
+./build/windows/bin/Release/omma-ascii --snapshot --zoom 2 --focus Earth --date 2030-03-21
 ```
+
+`--colour truecolour|ansi16|ascii` picks the output depth. The `ascii` mode maps
+pixel brightness onto a density ramp, which is what keeps snapshots diffable —
+a pixel renderer that produces a blank rectangle without colour is a renderer
+that has stopped being tested.
+
+`--tilt DEG` and `--spin DEG` set the camera; `90` is top-down, `30` is the
+2:1 dimetric projection RollerCoaster Tycoon uses.
 
 The headless driver prints the solar system as a table, plus a live
 demonstration of the clock, time warp and determinism machinery:
 
 ```bash
-./build/windows/bin/Debug/omma-headless
+./build/windows/bin/Release/omma-headless
 ```
 
 ## A note on floating point
@@ -164,7 +180,7 @@ the performance for reproducibility, and we pay it deliberately.
 - [x] **0.1** project skeleton, CMake, test harness
 - [x] core: `Vec3`, typed units, `Epoch`, deterministic fixed-step clock
 - [x] physics: `IEphemeris`, Kepler propagation, real solar system data
-- [x] render: ASCII canvas, camera, time warp, orbital-element HUD
+- [x] render: half-block truecolour canvas, dimetric camera, time warp, HUD
 - [ ] **0.2** gravity field, RK4 and Verlet integrators, energy-conservation tests
 - [ ] **0.3** world, scheduler, spacecraft, launch and burn — *launch something*
 - [ ] **0.4** CI on Windows and Linux
