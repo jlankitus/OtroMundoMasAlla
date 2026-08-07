@@ -1,0 +1,117 @@
+# OtroMundoMasAlla
+
+A deterministic solar system and spacecraft simulator, written in C++20.
+
+Real SI units. Real gravity. Planets propagated analytically, spacecraft
+integrated numerically, both behind one interface. Fixed timestep, seeded RNG,
+bit-reproducible runs. It renders in your terminal.
+
+> **Status:** `v0.1.0` — skeleton. Nothing orbits yet.
+
+---
+
+## Why this exists
+
+Two goals, and they turn out to be the same goal:
+
+1. **Build something beautiful.** Launch satellites, fly constellations, watch
+   orbital mechanics do the counter-intuitive things orbital mechanics does.
+2. **Build it the way flight dynamics software is actually built.** Deterministic
+   core, headless-first, validated against independent implementations of the
+   same physics, Monte Carlo capable, tested in CI.
+
+The second constraint is what makes the first one achievable. A simulator you
+cannot reproduce is a simulator you cannot debug, and a simulator you cannot
+debug stops being fun at roughly the same moment it stops being correct.
+
+## Architecture
+
+```
+core  ──▶  physics  ──▶  sim  ──▶  apps
+```
+
+Dependencies point one way and the build system enforces it. `core` knows
+nothing about orbits. `physics` knows nothing about scheduling. `sim` knows
+nothing about rendering. `apps` are interchangeable clients.
+
+| Layer | Contains | Knows nothing about |
+|---|---|---|
+| `src/core` | units, `Vec3`, `Epoch`, fixed-step clock | orbits |
+| `src/physics` | `IEphemeris`, Kepler, gravity, integrators | time warp, scheduling |
+| `src/sim` | world, scheduler, spacecraft, telemetry | pixels |
+| `apps/omma-headless` | scenario runner, CSV telemetry, exit codes | — |
+| `apps/omma-ascii` | terminal renderer, HUD, camera | physics internals |
+
+A Unity or Unreal front-end, if it ever happens, is one more entry in `apps/`.
+The simulator is the product; the renderer is a client.
+
+### The central design decision
+
+Celestial bodies and spacecraft are propagated differently, because they have
+genuinely different capabilities in time:
+
+|  | Kepler body | Integrated body |
+|---|---|---|
+| "Where are you at `t = +5 years`?" | one function call | must step there |
+| "Where were you 3 days ago?" | one function call | gone, unless stored |
+| Access pattern | **random access in time** | **sequential only** |
+
+So they get different interfaces. `IEphemeris::sample(t)` is the *environment* —
+valid at any instant, including the sub-step times an RK4 stage asks for.
+Spacecraft are integrated against that environment.
+
+This is not a simplification. It is what SPICE, GMAT, STK and Orekit all do:
+planetary positions are looked up, not simulated. Full n-body remains available
+as an `IEphemeris` implementation, where it earns its keep as a **cross-check** —
+two independent implementations of the same physics that must agree.
+
+It is also what makes unlimited time warp possible. A coasting spacecraft can be
+promoted onto its own Kepler ellipse ("on rails"), at which point its position is
+a function call and warp is unbounded.
+
+## Building
+
+Requires CMake ≥ 3.21 and a C++20 compiler. Catch2 is fetched automatically.
+
+**Windows (MSVC):**
+
+```bash
+cmake --preset windows && cmake --build --preset windows && ctest --preset windows
+```
+
+**Linux:**
+
+```bash
+cmake --preset linux && cmake --build --preset linux && ctest --preset linux
+```
+
+**Strict, the way CI builds it:**
+
+```bash
+cmake --preset ci && cmake --build --preset ci && ctest --preset ci
+```
+
+## A note on floating point
+
+The build never enables `-ffast-math` or `/fp:fast`. Those permit the compiler
+to reassociate floating-point expressions, so `(a + b) + c` may silently become
+`a + (b + c)` — a different answer under IEEE-754. That is how you end up with a
+simulator that produces one trajectory in Debug and another in Release. We pay
+the performance for reproducibility, and we pay it deliberately.
+
+## Roadmap
+
+- [x] **0.1** project skeleton, CMake, test harness
+- [ ] **0.2** `Vec3`, typed units, `Epoch`, deterministic fixed-step clock
+- [ ] **0.3** `IEphemeris`, Kepler propagation, real solar system data
+- [ ] **0.4** gravity field, RK4 and Verlet integrators, energy-conservation tests
+- [ ] **0.5** world, scheduler, spacecraft, launch and burn
+- [ ] **0.6** ASCII renderer, time warp, orbital-element HUD — *launch something*
+- [ ] **0.7** perturbations: J2, third-body, drag
+- [ ] **0.8** constellations, ground tracks, coverage
+- [ ] **0.9** radio links and link budgets
+- [ ] **1.0** Monte Carlo runner, record/replay, 6DOF attitude
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

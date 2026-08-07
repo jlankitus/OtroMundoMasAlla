@@ -1,0 +1,40 @@
+# ── Build output ──────────────────────────────────────────────
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# ── IDE / editor ──────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# ── Compiler / linker droppings ───────────────────────────────
+*.obj
+*.o
+*.lib
+*.a
+*.pdb
+*.ilk
+*.exp
+*.dll
+*.so
+*.dylib
+*.exe
+
+# ── Simulation output ─────────────────────────────────────────
+# A run is reproducible from its scenario plus its seed, so we
+# version the inputs and never the outputs. Note we do NOT ignore
+# *.csv globally — planetary data under data/ is an input and
+# belongs in the repository.
+runs/
+telemetry/
+*.omma-replay
+
+# ── OS ────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
