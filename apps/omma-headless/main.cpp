@@ -14,6 +14,8 @@
 #include "core/units.hpp"
 #include "core/vec3.hpp"
 #include "core/version.hpp"
+#include "physics/orbital_elements.hpp"
+#include "physics/solar_system.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -194,15 +196,141 @@ void demoReplay() {
                 con::reset().data());
 }
 
+void demoSolarSystem(const omma::SolarSystem& system, omma::Epoch t) {
+    rule("the solar system, right now");
+
+    std::printf("  epoch %s UTC   (JD %.5f)\n\n", t.toString().c_str(), t.julianDate());
+    std::printf("    %-8s %10s %10s %9s %8s %7s %10s\n",
+                "body", "r [au]", "r [Gm]", "v [km/s]", "period", "ecc", "true anom");
+    std::printf("    %-8s %10s %10s %9s %8s %7s %10s\n",
+                "--------", "----------", "----------", "---------",
+                "--------", "-------", "----------");
+
+    for (const auto& body : system.bodies()) {
+        const auto state = body->sample(t);
+        const double rAu = state.position.norm() / omma::constants::kAu;
+        const double speedKms = state.velocity.norm() / 1000.0;
+
+        // The Sun is a FixedEphemeris and has no orbit to report. Rather than
+        // ask the interface for something it cannot provide, we ask whether
+        // this particular implementation happens to be a Kepler body. A
+        // dynamic_cast in a display path is fine; one in a physics inner loop
+        // would be a design smell worth fixing.
+        const auto* kepler = dynamic_cast<const omma::KeplerEphemeris*>(body.get());
+        if (kepler == nullptr) {
+            std::printf("    %-8s %10.4f %10.4f %9.3f %8s %7s %10s\n",
+                        body->name().data(), rAu, state.position.norm() / 1e9,
+                        speedKms, "-", "-", "-");
+            continue;
+        }
+
+        const auto elements = kepler->elementsAt(t);
+        const double periodDays =
+            kepler->orbitalPeriodSeconds(t) / omma::constants::kSecondsPerDay;
+        const double E = omma::solveKeplerEquation(elements.meanAnomalyAtEpoch,
+                                                   elements.eccentricity);
+        const double nu = omma::wrapToTwoPi(
+            omma::trueAnomalyFromEccentric(E, elements.eccentricity));
+
+        char periodText[16];
+        if (periodDays < 1000.0) {
+            std::snprintf(periodText, sizeof(periodText), "%.1f d", periodDays);
+        } else {
+            std::snprintf(periodText, sizeof(periodText), "%.2f y",
+                          periodDays / 365.25);
+        }
+
+        std::printf("    %-8s %10.4f %10.4f %9.3f %8s %7.4f %9.2f\n",
+                    body->name().data(), rAu, state.position.norm() / 1e9, speedKms,
+                    periodText, elements.eccentricity, omma::toDegrees(nu));
+    }
+
+    // Distances between bodies, which is what a mission planner actually cares
+    // about and what a heliocentric table does not show you.
+    const auto earth = system[omma::BodyId::Earth].sample(t);
+    const auto moon = system[omma::BodyId::Moon].sample(t);
+    const auto mars = system[omma::BodyId::Mars].sample(t);
+    const double lightSecond = omma::constants::kSpeedOfLight;
+
+    std::printf("\n  Earth to Moon        %9.0f km   (%.2f light-seconds)\n",
+                distance(earth.position, moon.position) / 1000.0,
+                distance(earth.position, moon.position) / lightSecond);
+    std::printf("  Earth to Mars        %9.3f Gm   (%.1f light-minutes)\n",
+                distance(earth.position, mars.position) / 1e9,
+                distance(earth.position, mars.position) / lightSecond / 60.0);
+}
+
+void demoAnalyticWarp(const omma::SolarSystem& system, omma::Epoch t) {
+    rule("analytic propagation: any epoch, one call");
+
+    std::printf("  Kepler bodies are a pure function of time, so jumping ahead\n");
+    std::printf("  costs exactly what advancing one second costs. This is what\n");
+    std::printf("  makes unbounded time warp possible.\n\n");
+
+    const auto& jupiter = system[omma::BodyId::Jupiter];
+    std::printf("    %-22s %10s %11s\n", "epoch", "r [au]", "long [deg]");
+    std::printf("    %-22s %10s %11s\n", "----------------------", "----------",
+                "-----------");
+
+    for (const int years : {0, 1, 6, 12, 24, -50}) {
+        const omma::Epoch when = t + std::chrono::hours{24 * 365 * years};
+        const auto p = jupiter.sample(when).position;
+        std::printf("    %-22s %10.4f %11.2f\n",
+                    when.toString().substr(0, 10).c_str(),
+                    p.norm() / omma::constants::kAu,
+                    omma::toDegrees(omma::wrapToTwoPi(std::atan2(p.y, p.x))));
+    }
+    std::printf("\n  Jupiter's period is 11.86 years, so the +12 year row should\n");
+    std::printf("  land close to the +0 row. It does, and no integration ran.\n");
+}
+
+void demoConservation(const omma::SolarSystem& system, omma::Epoch t) {
+    rule("conservation: is the model actually right?");
+
+    // Specific orbital energy and angular momentum are constant on a Kepler
+    // orbit. Sampling them a year apart and finding them unchanged is an
+    // independent check on the propagator, and the same check will catch an
+    // integrator that leaks energy once we have one.
+    const auto& earth = system[omma::BodyId::Earth];
+    const double gm = system[omma::BodyId::Sun].gravitationalParameter()
+                    + earth.gravitationalParameter();
+
+    const auto s0 = earth.sample(t);
+    const auto s1 = earth.sample(t + std::chrono::hours{24 * 183});
+
+    const double e0 = omma::specificOrbitalEnergy(s0, gm);
+    const double e1 = omma::specificOrbitalEnergy(s1, gm);
+    const auto h0 = omma::specificAngularMomentum(s0);
+    const auto h1 = omma::specificAngularMomentum(s1);
+
+    std::printf("  Earth, sampled six months apart:\n");
+    std::printf("    radius               %.6f au  ->  %.6f au   (it moved)\n",
+                s0.position.norm() / omma::constants::kAu,
+                s1.position.norm() / omma::constants::kAu);
+    std::printf("    speed                %.4f km/s  ->  %.4f km/s\n",
+                s0.velocity.norm() / 1000.0, s1.velocity.norm() / 1000.0);
+    std::printf("    specific energy      %.9e  ->  %.9e J/kg\n", e0, e1);
+    std::printf("    %srelative change      %.2e   <- conserved%s\n",
+                con::green().data(), std::abs((e1 - e0) / e0), con::reset().data());
+    std::printf("    |h| relative change  %.2e   <- conserved\n",
+                std::abs((h1.norm() - h0.norm()) / h0.norm()));
+}
+
 }  // namespace
 
 int main() {
     con::enableAnsi();
 
-    std::printf("\n%s%s%s  ...  core self-demo\n",
+    std::printf("\n%s%s%s  ...  self-demo\n",
                 con::bold().data(), omma::versionBanner().data(), con::reset().data());
-    std::printf("no scenario loaded; showing what core can do so far\n");
+    std::printf("no scenario loaded; showing what core and physics can do so far\n");
 
+    const omma::SolarSystem system = omma::SolarSystem::standard();
+    const omma::Epoch now = omma::Epoch::fromCivil(omma::CivilTime{2026, 8, 6, 12, 0, 0.0});
+
+    demoSolarSystem(system, now);
+    demoAnalyticWarp(system, now);
+    demoConservation(system, now);
     demoVectors();
     demoEpoch();
     demoNoDrift();

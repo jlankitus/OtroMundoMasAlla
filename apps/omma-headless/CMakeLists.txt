@@ -7,5 +7,6 @@ add_executable(omma-headless main.cpp)
 target_link_libraries(omma-headless
     PRIVATE
         omma::core
+        omma::physics
         omma::compile_options
 )
