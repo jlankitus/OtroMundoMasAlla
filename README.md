@@ -6,8 +6,8 @@ Real SI units. Real gravity. Planets propagated analytically, spacecraft
 integrated numerically, both behind one interface. Fixed timestep, seeded RNG,
 bit-reproducible runs. It renders in your terminal.
 
-> **Status:** `v0.2.0` — eleven bodies orbiting on a tilted board, drawn with
-> truecolour half-block pixels. No spacecraft yet.
+> **Status:** `v0.3.0` — eleven bodies on a tilted board in truecolour, and a
+> validated numerical integrator ready to fly spacecraft through them.
 
 ```
                                                                                       ....
@@ -67,7 +67,7 @@ nothing about rendering. `apps` are interchangeable clients.
 | Layer | Contains | Knows nothing about |
 |---|---|---|
 | `src/core` | units, `Vec3`, `Epoch`, fixed-step clock | orbits |
-| `src/physics` | `IEphemeris`, Kepler, gravity, integrators | time warp, scheduling |
+| `src/physics` | `IEphemeris`, Kepler, `GravityField`, integrators | time warp, scheduling |
 | `src/sim` | world, scheduler, spacecraft, telemetry | pixels |
 | `apps/omma-headless` | scenario runner, CSV telemetry, exit codes | — |
 | `apps/omma-ascii` | game loop, key bindings, which glyph a planet gets | physics internals |
@@ -181,7 +181,7 @@ the performance for reproducibility, and we pay it deliberately.
 - [x] core: `Vec3`, typed units, `Epoch`, deterministic fixed-step clock
 - [x] physics: `IEphemeris`, Kepler propagation, real solar system data
 - [x] render: half-block truecolour canvas, dimetric camera, time warp, HUD
-- [ ] **0.2** gravity field, RK4 and Verlet integrators, energy-conservation tests
+- [x] physics: gravity field, four integrators, energy-conservation tests
 - [ ] **0.3** world, scheduler, spacecraft, launch and burn — *launch something*
 - [ ] **0.4** CI on Windows and Linux
 - [ ] **0.5** perturbations: J2, third-body, drag

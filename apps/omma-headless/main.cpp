@@ -14,10 +14,13 @@
 #include "core/units.hpp"
 #include "core/vec3.hpp"
 #include "core/version.hpp"
+#include "physics/gravity_field.hpp"
+#include "physics/integrator.hpp"
 #include "physics/orbital_elements.hpp"
 #include "physics/solar_system.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -316,6 +319,137 @@ void demoConservation(const omma::SolarSystem& system, omma::Epoch t) {
                 std::abs((h1.norm() - h0.norm()) / h0.norm()));
 }
 
+void demoIntegrators() {
+    rule("integrator bake-off: 50 orbits of a 400 km circular orbit");
+
+    // A lone Earth, so the analytic two-body solution is exactly right and any
+    // difference is integration error rather than a real perturbation.
+    class LoneEarth final : public omma::IEphemeris {
+    public:
+        [[nodiscard]] omma::StateVector sample(omma::Epoch) const noexcept override { return {}; }
+        [[nodiscard]] double gravitationalParameter() const noexcept override {
+            return 3.98600435507e14;
+        }
+        [[nodiscard]] double meanRadius() const noexcept override { return 6.371e6; }
+        [[nodiscard]] std::string_view name() const noexcept override { return "Earth"; }
+    };
+    static const LoneEarth earth;
+
+    constexpr double kGm = 3.98600435507e14;
+    const double r0 = 6.371e6 + 400.0_km;
+    const double v0 = std::sqrt(kGm / r0);
+    const double period = omma::constants::kTwoPi * std::sqrt(r0 * r0 * r0 / kGm);
+    const omma::StateVector initial{omma::Vec3{r0, 0.0, 0.0}, omma::Vec3{0.0, v0, 0.0}};
+    const omma::Epoch start = omma::Epoch::j2000();
+
+    // The analytic answer to compare against.
+    const auto elements = omma::elementsFromState(initial, kGm, start);
+
+    std::printf("    %-21s %7s %13s %14s %13s\n",
+                "method", "samples", "energy drift", "position err", "final alt");
+    std::printf("    %-21s %7s %13s %14s %13s\n",
+                "---------------------", "-------", "-------------",
+                "--------------", "-------------");
+
+    constexpr double dt = 2.0;
+    constexpr double kOrbits = 50.0;
+
+    for (const omma::Integrator method : {omma::Integrator::ExplicitEuler,
+                                          omma::Integrator::SemiImplicitEuler,
+                                          omma::Integrator::VelocityVerlet,
+                                          omma::Integrator::RungeKutta4}) {
+        omma::GravityField field{{&earth}};
+        omma::StateVector s = initial;
+
+        field.refresh(start);
+        const double energy0 = omma::specificEnergy(s, field);
+
+        const auto steps = static_cast<long long>(kOrbits * period / dt);
+        for (long long i = 0; i < steps; ++i) {
+            omma::integrate(method, s, field,
+                            start + omma::fromSeconds(dt * static_cast<double>(i)), dt);
+        }
+
+        const omma::Epoch end = start + omma::fromSeconds(dt * static_cast<double>(steps));
+        field.refresh(end);
+        const double drift = std::abs((omma::specificEnergy(s, field) - energy0) / energy0);
+        const double positionError =
+            distance(s.position, omma::stateFromElements(elements, kGm, end).position);
+        const double altitude = (s.position.norm() - 6.371e6) / 1000.0;
+
+        const bool bad = drift > 1e-6;
+        std::printf("    %-21s %7d %s%13.3e%s %11.1f km %10.1f km\n",
+                    omma::integratorName(method).data(),
+                    omma::accelerationSamplesPerStep(method),
+                    bad ? con::red().data() : con::green().data(), drift,
+                    con::reset().data(),
+                    positionError / 1000.0, altitude);
+    }
+
+    std::printf("\n  Started at 400.0 km. Explicit Euler consistently overshoots a\n");
+    std::printf("  curving path, so it GAINS energy every step and spirals outward.\n");
+    std::printf("  Semi-implicit Euler differs by one reordered line -- velocity\n");
+    std::printf("  before position -- which makes it symplectic, at identical cost.\n");
+    std::printf("  Verlet's error oscillates within a fixed envelope forever;\n");
+    std::printf("  RK4's is far smaller but accumulates slowly. Neither is simply\n");
+    std::printf("  better: RK4 wins over hours, symplectic wins over eons.\n");
+}
+
+void demoBurn() {
+    rule("a prograde burn: pushing forward makes you go higher, later");
+
+    class LoneEarth final : public omma::IEphemeris {
+    public:
+        [[nodiscard]] omma::StateVector sample(omma::Epoch) const noexcept override { return {}; }
+        [[nodiscard]] double gravitationalParameter() const noexcept override {
+            return 3.98600435507e14;
+        }
+        [[nodiscard]] double meanRadius() const noexcept override { return 6.371e6; }
+        [[nodiscard]] std::string_view name() const noexcept override { return "Earth"; }
+    };
+    static const LoneEarth earth;
+
+    constexpr double kGm = 3.98600435507e14;
+    const double r0 = 6.371e6 + 400.0_km;
+    omma::StateVector s{omma::Vec3{r0, 0.0, 0.0},
+                        omma::Vec3{0.0, std::sqrt(kGm / r0), 0.0}};
+
+    omma::GravityField field{{&earth}};
+    const omma::Epoch start = omma::Epoch::j2000();
+    field.refresh(start);
+
+    const auto before = omma::elementsFromState(s, kGm, start);
+    std::printf("  before      alt %.1f km circular, e = %.6f\n",
+                (s.position.norm() - 6.371e6) / 1000.0, before.eccentricity);
+
+    // 100 m/s of prograde delta-v, applied over 20 seconds.
+    const omma::Vec3 prograde = s.velocity.normalized();
+    constexpr double kDeltaV = 100.0;
+    constexpr double kBurnSeconds = 20.0;
+    for (int i = 0; i < static_cast<int>(kBurnSeconds); ++i) {
+        omma::integrate(omma::Integrator::RungeKutta4, s, field,
+                        start + omma::fromSeconds(static_cast<double>(i)), 1.0,
+                        prograde * (kDeltaV / kBurnSeconds));
+    }
+
+    const auto after = omma::elementsFromState(s, kGm, start + omma::fromSeconds(kBurnSeconds));
+    std::printf("  burn        %+.0f m/s prograde over %.0f s\n", kDeltaV, kBurnSeconds);
+    std::printf("  after       e = %.6f,  peri %.1f km,  apo %.1f km\n",
+                after.eccentricity,
+                (omma::periapsisRadius(after) - 6.371e6) / 1000.0,
+                (omma::apoapsisRadius(after) - 6.371e6) / 1000.0);
+    std::printf("  period      %.2f min  ->  %.2f min\n",
+                omma::orbitalPeriod(before, kGm) / 60.0,
+                omma::orbitalPeriod(after, kGm) / 60.0);
+    std::printf("\n  %sPeriapsis barely moved; apoapsis rose by %.0f km.%s\n",
+                con::green().data(),
+                (omma::apoapsisRadius(after) - omma::apoapsisRadius(before)) / 1000.0,
+                con::reset().data());
+    std::printf("  A burn changes the orbit on the OPPOSITE side. Thrust here and\n");
+    std::printf("  you climb half an orbit from now -- which is why catching\n");
+    std::printf("  something ahead of you means slowing down, not speeding up.\n");
+}
+
 }  // namespace
 
 int main() {
@@ -329,6 +463,8 @@ int main() {
     const omma::Epoch now = omma::Epoch::fromCivil(omma::CivilTime{2026, 8, 6, 12, 0, 0.0});
 
     demoSolarSystem(system, now);
+    demoIntegrators();
+    demoBurn();
     demoAnalyticWarp(system, now);
     demoConservation(system, now);
     demoVectors();
