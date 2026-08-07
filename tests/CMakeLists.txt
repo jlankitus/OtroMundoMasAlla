@@ -30,6 +30,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(omma_tests
     test_console.cpp
     test_epoch.cpp
+    test_integrator.cpp
     test_kepler.cpp
     test_orbital_elements.cpp
     test_render.cpp
