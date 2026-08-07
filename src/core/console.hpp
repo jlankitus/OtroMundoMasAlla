@@ -40,4 +40,66 @@ bool enableAnsi() noexcept;
 [[nodiscard]] std::string_view cyan() noexcept;
 [[nodiscard]] std::string_view white() noexcept;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive terminal control, for the ASCII renderer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct TerminalSize {
+    int columns{80};
+    int rows{24};
+};
+
+/// Current terminal dimensions, or a sane 80x24 default if they cannot be
+/// determined (output redirected, no console attached).
+[[nodiscard]] TerminalSize terminalSize() noexcept;
+
+/// RAII guard that puts the terminal into a state suitable for a full-screen
+/// interactive app and — crucially — puts it back.
+///
+/// Raw mode disables line buffering and echo so keys arrive as they are
+/// pressed. The alternate screen buffer means quitting restores whatever the
+/// user had on screen before, rather than leaving a wall of orbital debris in
+/// their scrollback.
+///
+/// This is RAII rather than a pair of functions because leaving a terminal in
+/// raw mode with the cursor hidden is genuinely user-hostile: their shell
+/// stops echoing what they type and the only fix is `reset`. A destructor runs
+/// on the normal path, on an early return, and while an exception unwinds. It
+/// does NOT run on std::abort or a signal, which is why the renderer also
+/// handles Ctrl-C itself rather than letting the default handler take it.
+class InteractiveSession {
+public:
+    InteractiveSession() noexcept;
+    ~InteractiveSession() noexcept;
+
+    InteractiveSession(const InteractiveSession&) = delete;
+    InteractiveSession& operator=(const InteractiveSession&) = delete;
+
+    /// False if the terminal could not be put into raw mode — output is
+    /// redirected, or this is not a console. The caller should bail out rather
+    /// than render an animation into a pipe.
+    [[nodiscard]] bool ok() const noexcept { return ok_; }
+
+private:
+    bool ok_{false};
+};
+
+/// Read one key without blocking. Returns 0 when nothing is pending.
+///
+/// Only reports plain ASCII. Arrow keys and function keys arrive as multi-byte
+/// sequences that differ between platforms; the renderer uses letter keys
+/// instead, which sidesteps that entirely and works over ssh.
+[[nodiscard]] int pollKey() noexcept;
+
+/// Move the cursor to the top-left WITHOUT clearing.
+///
+/// Clearing and redrawing produces visible flicker, because there is a moment
+/// when the screen genuinely is blank. Overwriting every cell from a
+/// pre-composed buffer never shows a partial frame. Same reason a game
+/// double-buffers.
+[[nodiscard]] std::string_view cursorHome() noexcept;
+
+/// Erase from the cursor to the end of the screen. Used once after a resize.
+[[nodiscard]] std::string_view clearToEnd() noexcept;
+
 }  // namespace omma::console

@@ -6,9 +6,12 @@
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
 #  define NOMINMAX
+#  include <conio.h>
 #  include <io.h>
 #  include <windows.h>
 #else
+#  include <sys/ioctl.h>
+#  include <termios.h>
 #  include <unistd.h>
 #endif
 
@@ -113,5 +116,125 @@ OMMA_ANSI(cyan,    "\033[36m")
 OMMA_ANSI(white,   "\033[37m")
 
 #undef OMMA_ANSI
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive terminal
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::string_view cursorHome() noexcept { return "\033[H"; }
+std::string_view clearToEnd() noexcept { return "\033[0J"; }
+
+TerminalSize terminalSize() noexcept {
+#if defined(_WIN32)
+    CONSOLE_SCREEN_BUFFER_INFO info{};
+    const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info) != 0) {
+        // srWindow is the visible viewport. dwSize is the scrollback buffer,
+        // which on Windows is routinely 9000 rows tall -- using it would size
+        // the canvas to the buffer rather than the window.
+        const int columns = info.srWindow.Right - info.srWindow.Left + 1;
+        const int rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+        if (columns > 0 && rows > 0) {
+            return TerminalSize{columns, rows};
+        }
+    }
+#else
+    winsize ws{};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0) {
+        return TerminalSize{static_cast<int>(ws.ws_col), static_cast<int>(ws.ws_row)};
+    }
+#endif
+    return TerminalSize{};
+}
+
+namespace {
+
+#if !defined(_WIN32)
+termios g_savedTermios{};
+bool g_termiosSaved = false;
+#endif
+
+}  // namespace
+
+InteractiveSession::InteractiveSession() noexcept {
+    if (!enableAnsi()) {
+        return;   // not a terminal, or colour was declined: do not take it over
+    }
+
+#if defined(_WIN32)
+    // _getch() already bypasses line buffering and echo, so raw mode needs no
+    // extra work here. We do need VT input off nothing in particular; ANSI
+    // output was enabled by enableAnsi().
+    ok_ = true;
+#else
+    if (tcgetattr(STDIN_FILENO, &g_savedTermios) != 0) {
+        return;
+    }
+    g_termiosSaved = true;
+
+    termios raw = g_savedTermios;
+    raw.c_lflag &= ~static_cast<tcflag_t>(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;    // read() returns immediately...
+    raw.c_cc[VTIME] = 0;   // ...with whatever is available, possibly nothing
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) {
+        return;
+    }
+    ok_ = true;
+#endif
+
+    if (ok_) {
+        // 1049 = alternate screen buffer, ?25l = hide cursor.
+        std::fputs("\033[?1049h\033[?25l", stdout);
+        std::fflush(stdout);
+    }
+}
+
+InteractiveSession::~InteractiveSession() noexcept {
+    if (!ok_) {
+        return;
+    }
+    std::fputs("\033[?25h\033[?1049l", stdout);
+    std::fflush(stdout);
+
+#if !defined(_WIN32)
+    if (g_termiosSaved) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_savedTermios);
+        g_termiosSaved = false;
+    }
+#endif
+}
+
+int pollKey() noexcept {
+#if defined(_WIN32)
+    if (_kbhit() == 0) {
+        return 0;
+    }
+    const int key = _getch();
+    // 0 and 224 prefix an extended key (arrows, function keys). Consume the
+    // second byte and report nothing, rather than letting the payload byte
+    // masquerade as a letter -- the down arrow's second byte is 80, which is
+    // 'P', and a stray 'P' doing something surprising is a maddening bug.
+    if (key == 0 || key == 224) {
+        static_cast<void>(_getch());
+        return 0;
+    }
+    return key;
+#else
+    unsigned char byte = 0;
+    const auto count = read(STDIN_FILENO, &byte, 1);
+    if (count != 1) {
+        return 0;
+    }
+    if (byte == 0x1b) {
+        // An escape sequence. Drain it so its payload bytes are not mistaken
+        // for keystrokes, and report nothing.
+        unsigned char discard = 0;
+        while (read(STDIN_FILENO, &discard, 1) == 1) {
+        }
+        return 0x1b;   // bare Esc, or an arrow key: either way, treat as Esc
+    }
+    return static_cast<int>(byte);
+#endif
+}
 
 }  // namespace omma::console

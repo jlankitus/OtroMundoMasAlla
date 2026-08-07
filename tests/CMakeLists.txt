@@ -32,6 +32,7 @@ add_executable(omma_tests
     test_epoch.cpp
     test_kepler.cpp
     test_orbital_elements.cpp
+    test_render.cpp
     test_sim_clock.cpp
     test_solar_system.cpp
     test_vec3.cpp
@@ -42,6 +43,7 @@ target_link_libraries(omma_tests
     PRIVATE
         omma::core
         omma::physics
+        omma::render
         omma::compile_options
         Catch2::Catch2WithMain
 )

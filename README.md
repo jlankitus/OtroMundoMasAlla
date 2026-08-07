@@ -6,7 +6,33 @@ Real SI units. Real gravity. Planets propagated analytically, spacecraft
 integrated numerically, both behind one interface. Fixed timestep, seeded RNG,
 bit-reproducible runs. It renders in your terminal.
 
-> **Status:** `v0.1.0` — skeleton. Nothing orbits yet.
+> **Status:** `v0.1.0` — eleven bodies orbiting, in your terminal. No spacecraft yet.
+
+```
+                              ..................
+                         .....                 .....
+                       ...                         ....
+                    ...         .............         ...
+                   ..       .....           .....       ...
+                 ..       ...                   ...       ..
+                ..      ...                       ...      ..
+               ..      ..                           ...     ..
+              ..      ..          ........            ..     ..
+              .      ..        ....      ....          .      .
+             ..     ..        ..            .m Mercury ..     ..
+             .      .        ..               ..        .      .
+             .      .       ..        @ Sun    .        .      .
+             .      .       .                  .        .      .
+             ..     ..      ..                ..       ..      .
+              .      .       .               ..        .      ..
+              ..     ..       ..            ..        ..      .
+               .      ...      ....      ....       ...      .
+                .       ..        .......          ..       ..
+                 ..       ...                   ....      ...
+                  ..        .....           .....        ..
+                    ..          .....V.......          E..Moon
+                      ...                           ...
+```
 
 ---
 
@@ -40,7 +66,7 @@ nothing about rendering. `apps` are interchangeable clients.
 | `src/physics` | `IEphemeris`, Kepler, gravity, integrators | time warp, scheduling |
 | `src/sim` | world, scheduler, spacecraft, telemetry | pixels |
 | `apps/omma-headless` | scenario runner, CSV telemetry, exit codes | — |
-| `apps/omma-ascii` | terminal renderer, HUD, camera | physics internals |
+| `apps/omma-ascii` | game loop, key bindings, which glyph a planet gets | physics internals |
 
 A Unity or Unreal front-end, if it ever happens, is one more entry in `apps/`.
 The simulator is the product; the renderer is a client.
@@ -91,6 +117,40 @@ cmake --preset linux && cmake --build --preset linux && ctest --preset linux
 cmake --preset ci && cmake --build --preset ci && ctest --preset ci
 ```
 
+## Running it
+
+```bash
+./build/windows/bin/Debug/omma-ascii
+```
+
+| key | |
+|---|---|
+| `space` | pause / resume |
+| `-` `=` | time warp down / up, from real time to 20 years per second |
+| `[` `]` | zoom out / in |
+| `1`-`5` | zoom presets: Earth-Moon, inner system, to Jupiter, to Neptune, everything |
+| `w a s d` | pan |
+| `tab` / `p` | next / previous body to follow |
+| `c` | re-centre on the followed body |
+| `o` `l` | orbit trails, labels |
+| `?` | help |
+| `q` | quit |
+
+`omma-ascii --snapshot` renders a single frame to stdout and exits: plain text,
+diffable, and something CI can assert against. A visual system that can only be
+checked by looking at it is a visual system nobody checks.
+
+```bash
+./build/windows/bin/Debug/omma-ascii --snapshot --zoom 2 --focus Earth --date 2030-03-21
+```
+
+The headless driver prints the solar system as a table, plus a live
+demonstration of the clock, time warp and determinism machinery:
+
+```bash
+./build/windows/bin/Debug/omma-headless
+```
+
 ## A note on floating point
 
 The build never enables `-ffast-math` or `/fp:fast`. Those permit the compiler
@@ -102,14 +162,16 @@ the performance for reproducibility, and we pay it deliberately.
 ## Roadmap
 
 - [x] **0.1** project skeleton, CMake, test harness
-- [ ] **0.2** `Vec3`, typed units, `Epoch`, deterministic fixed-step clock
-- [ ] **0.3** `IEphemeris`, Kepler propagation, real solar system data
-- [ ] **0.4** gravity field, RK4 and Verlet integrators, energy-conservation tests
-- [ ] **0.5** world, scheduler, spacecraft, launch and burn
-- [ ] **0.6** ASCII renderer, time warp, orbital-element HUD — *launch something*
-- [ ] **0.7** perturbations: J2, third-body, drag
-- [ ] **0.8** constellations, ground tracks, coverage
-- [ ] **0.9** radio links and link budgets
+- [x] core: `Vec3`, typed units, `Epoch`, deterministic fixed-step clock
+- [x] physics: `IEphemeris`, Kepler propagation, real solar system data
+- [x] render: ASCII canvas, camera, time warp, orbital-element HUD
+- [ ] **0.2** gravity field, RK4 and Verlet integrators, energy-conservation tests
+- [ ] **0.3** world, scheduler, spacecraft, launch and burn — *launch something*
+- [ ] **0.4** CI on Windows and Linux
+- [ ] **0.5** perturbations: J2, third-body, drag
+- [ ] **0.6** constellations, ground tracks, coverage
+- [ ] **0.7** radio links and link budgets
+- [ ] **0.8** swarm behaviour, intercepts, engagements
 - [ ] **1.0** Monte Carlo runner, record/replay, 6DOF attitude
 
 ## Licence
