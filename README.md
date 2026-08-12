@@ -69,7 +69,6 @@ nothing about rendering. `apps` are interchangeable clients.
 | `src/core` | units, `Vec3`, `Epoch`, fixed-step clock | orbits |
 | `src/physics` | `IEphemeris`, Kepler, `GravityField`, integrators | time warp, scheduling |
 | `src/sim` | world, scheduler, spacecraft, telemetry | pixels |
-| `apps/omma-headless` | scenario runner, CSV telemetry, exit codes | — |
 | `apps/omma-ascii` | game loop, key bindings, which glyph a planet gets | physics internals |
 
 A Unity or Unreal front-end, if it ever happens, is one more entry in `apps/`.
@@ -236,13 +235,6 @@ escapes we deliberately emit, closes its SGR state, and stays inside a size
 budget. With `--png-dir` it also parses each frame back into a PNG via
 `tools/ansi_to_png.py`, so the frames can be looked at without a terminal — which
 is how three of the four bugs in this pass were found.
-
-The headless driver prints the solar system as a table, plus a live
-demonstration of the clock, time warp and determinism machinery:
-
-```bash
-./build/windows/bin/Release/omma-headless
-```
 
 ## A note on floating point
 
