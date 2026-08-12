@@ -112,9 +112,19 @@ class Terminal:
                 self.column = 0
             elif ch == "\n":
                 self.row += 1
-                # omma-ascii always pairs \n with \r, but a bare \n in a raw-mode
-                # terminal does NOT return the carriage. Modelling that faithfully
-                # is how a missing \r would show up as a staircase.
+                self.column = 0
+                # A newline returns the carriage here, which is a deliberate
+                # relaxation of strict raw-mode behaviour.
+                #
+                # A bare \n in raw mode moves down WITHOUT returning the carriage,
+                # and modelling that was the pedantically correct choice. It also
+                # made this tool silently wrong for --snapshot output, which
+                # separates rows with a bare \n because it is meant to be a text
+                # file: every row after the first wrote off the right-hand edge and
+                # the reconstruction came out blank.
+                #
+                # The live stream sends \r\n, so it behaves identically either way.
+                # Being strict here bought nothing and cost a confusing hour.
             else:
                 self._put(ch)
             i += 1

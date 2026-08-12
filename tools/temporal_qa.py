@@ -171,13 +171,16 @@ def main() -> int:
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    common = ["--size", args.size, "--colour", "truecolour", "--tilt", "30"]
+    # The default scenario, so the temporal checks cover the spacecraft path --
+    # moving objects with trails are exactly what produces temporal artifacts.
+    common = ["--size", args.size, "--colour", "truecolour", "--tilt", "30",
+              "--scenario", "leo"]
     failures = 0
 
     # ── 1. paused: nothing moves, so nothing may change ─────────────────────
     print("[1] paused recording — frames must be byte-identical")
     paused_dir = out / "paused"
-    record(args.binary, paused_dir, 30, common + ["--paused", "--zoom", "2"])
+    record(args.binary, paused_dir, 30, common + ["--paused"])
     paused = load(paused_dir)
 
     differing = [i for i in range(1, len(paused)) if paused[i] != paused[0]]

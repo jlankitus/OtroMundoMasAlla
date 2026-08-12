@@ -485,6 +485,20 @@ std::size_t focusTargetCount(const World& world) {
     return world.system().size() + world.spacecraft().size();
 }
 
+/// Where the camera should look.
+///
+/// FOLLOWING A SPACECRAFT CENTRES ON THE BODY IT ORBITS, not on the craft.
+///
+/// Centring on the craft itself seemed obvious and is wrong. A satellite sits on
+/// its own ellipse, so keeping it in the middle swings the whole world around it
+/// every 90 minutes and pushes the far half of its own orbit off the screen —
+/// exactly the part you are trying to watch while burning. Centring the planet
+/// holds the ellipse still and complete, and the craft moves along it where it
+/// belongs.
+///
+/// This is what a map view does in every space game that has one, and the reason
+/// is the same: the orbit is the subject, not the vehicle. The HUD still reports
+/// the CRAFT, so following it still means something.
 omma::Vec3 focusPosition(const World& world, const ViewState& view) {
     const std::size_t bodies = world.system().size();
     if (view.focusIndex < bodies) {
@@ -492,7 +506,10 @@ omma::Vec3 focusPosition(const World& world, const ViewState& view) {
     }
     const std::size_t craftIndex = view.focusIndex - bodies;
     if (craftIndex < world.spacecraft().size()) {
-        return world.spacecraft()[craftIndex].state.position;
+        const auto& craft = world.spacecraft()[craftIndex];
+        return world.system().bodies()[craft.centralBodyIndex]
+            ->sample(world.now())
+            .position;
     }
     return omma::Vec3::zero();
 }
@@ -753,6 +770,29 @@ void render(Canvas& canvas, Camera& camera, const World& world,
 /// If the focus is a spacecraft, or something without a surface to orbit, it falls
 /// back to Earth. Refusing to launch because the camera happens to be pointed at
 /// the Sun would be technically defensible and annoying.
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenarios
+//
+// A named starting state, so the interesting thing is on screen the moment the
+// program opens rather than three keypresses later.
+//
+// The default is NOT an empty sky. That was the old behaviour and it was wrong:
+// the whole point of this simulator is spacecraft, and a first frame with none in
+// it shows off the part that was already finished. A default should demonstrate
+// what the thing is for.
+//
+// Every scenario is fully deterministic -- fixed altitudes, fixed inclinations,
+// fixed phasing, no randomness -- so a scenario name plus a frame count is a
+// reproducible test case, and the QA harness can assert on each one.
+// ─────────────────────────────────────────────────────────────────────────────
+enum class Scenario { Empty, Leo, Constellation, Transfer };
+
+/// What a scenario wants the camera to do, when the user has not said otherwise.
+struct ScenarioView {
+    std::size_t focusIndex{0};
+    double      frameSpan{0.0};      ///< 0 means "leave the camera alone"
+};
+
 LaunchRequest makeLaunchRequest(BodyId around, int index) {
     LaunchRequest request{};
     char name[24];
@@ -772,6 +812,91 @@ LaunchRequest makeLaunchRequest(BodyId around, int index) {
     request.propellantKg = 80.0;
     request.maxThrustNewtons = 400.0;   // ~1.4 m/s^2: burns take seconds, not hours
     return request;
+}
+
+/// Populate the world and say where to point.
+ScenarioView applyScenario(World& world, Scenario scenario) {
+    switch (scenario) {
+        case Scenario::Empty:
+            return {static_cast<std::size_t>(BodyId::Sun), 0.0};
+
+        case Scenario::Leo: {
+            // Three real mission profiles, chosen to look different from each
+            // other at a glance rather than to be a tidy set.
+            struct Orbit { const char* name; double altKm; double incDeg; double raanDeg;
+                           double phaseDeg; };
+            constexpr Orbit kOrbits[] = {
+                {"ISS-LIKE",  400.0,  51.6,   0.0,   0.0},   // crewed inclination
+                {"SUN-SYNC",  705.0,  98.2,  40.0, 120.0},   // earth observation
+                {"EQUATOR",   550.0,   5.0,  90.0, 240.0},   // low-inclination comms
+            };
+            for (int i = 0; i < static_cast<int>(std::size(kOrbits)); ++i) {
+                const Orbit& orbit = kOrbits[i];
+                LaunchRequest request = makeLaunchRequest(BodyId::Earth, i + 1);
+                request.name = orbit.name;
+                request.altitudeMetres = orbit.altKm * 1000.0;
+                request.inclinationRadians = omma::toRadians(orbit.incDeg);
+                request.longitudeOfAscendingNodeRadians = omma::toRadians(orbit.raanDeg);
+                request.meanAnomalyRadians = omma::toRadians(orbit.phaseDeg);
+                world.launch(request);
+            }
+            return {world.system().size(), 3.4e7};
+        }
+
+        case Scenario::Constellation: {
+            // A Walker-style set: four planes, three satellites each, evenly
+            // spread in right ascension and phased within each plane. This is how
+            // GPS, Iridium and Starlink are actually laid out, and it is the
+            // reason a constellation gives global coverage rather than a stripe.
+            constexpr int kPlanes = 4;
+            constexpr int kPerPlane = 3;
+            int index = 0;
+            for (int plane = 0; plane < kPlanes; ++plane) {
+                for (int slot = 0; slot < kPerPlane; ++slot) {
+                    LaunchRequest request = makeLaunchRequest(BodyId::Earth, ++index);
+                    char name[24];
+                    std::snprintf(name, sizeof(name), "W-%d%d", plane + 1, slot + 1);
+                    request.name = name;
+                    request.altitudeMetres = 780.0e3;
+                    request.inclinationRadians = omma::toRadians(86.4);
+                    request.longitudeOfAscendingNodeRadians =
+                        omma::toRadians(180.0 * plane / kPlanes);
+                    request.meanAnomalyRadians =
+                        omma::toRadians(360.0 * slot / kPerPlane
+                                        + 20.0 * plane);   // inter-plane phasing
+                    world.launch(request);
+                }
+            }
+            return {world.system().size(), 4.2e7};
+        }
+
+        case Scenario::Transfer: {
+            // One craft, circular, with a prograde burn already commanded. Within
+            // the first couple of simulated minutes the predicted ellipse visibly
+            // elongates while periapsis stays put -- the thing worth seeing, with
+            // nothing to press.
+            LaunchRequest request = makeLaunchRequest(BodyId::Earth, 1);
+            request.name = "TRANSFER";
+            request.altitudeMetres = 400.0e3;
+            request.inclinationRadians = omma::toRadians(28.5);
+            request.propellantKg = 140.0;
+            const auto id = world.launch(request);
+            world.commandDeltaV(id, ThrustCommand::Frame::Prograde, 900.0);
+            // Focus the CRAFT, not Earth: this scenario is about one vehicle's
+            // orbit changing, and the panel has to be showing that vehicle's
+            // apoapsis for the change to be legible. leo and constellation focus
+            // the planet instead, because those are about geometry.
+            //
+            // Span is wide enough for the post-burn apoapsis: 900 m/s from a
+            // 400 km circular orbit raises it to about 11 000 km radius.
+            // 4.5e7 rather than the 2.3e7 the apoapsis radius suggests: Earth
+            // sits at a FOCUS of the ellipse, not its centre, so an
+            // Earth-centred view has to reach the full apoapsis distance in one
+            // direction while the tilt compresses it vertically.
+            return {world.system().size(), 4.5e7};
+        }
+    }
+    return {0, 0.0};
 }
 
 void launchFromFocus(World& world, ViewState& view, int index) {
@@ -924,6 +1049,19 @@ struct Options {
     std::string keys;             ///< one character per frame; '.' means none
     bool        startPaused{false};
 
+    Scenario    scenario{Scenario::Leo};
+
+    /// Simulated steps to run before the FIRST frame.
+    ///
+    /// A scenario's interesting state is often not its initial state: the transfer
+    /// scenario commands a burn that takes 628 s, so a snapshot at t=0 shows the
+    /// circular orbit it started from and none of the point. Settling first makes
+    /// any scenario's evolved state reachable from --snapshot, and therefore
+    /// checkable by the QA harness.
+    int         settleSteps{0};
+    bool        focusForced{false};
+    bool        zoomForced{false};
+
     /// Pre-launch this many satellites before the first frame.
     ///
     /// Exists so the spacecraft rendering path is reachable from --snapshot, which
@@ -953,7 +1091,9 @@ void printUsage() {
         "  --frame-delta MS    synthetic wall-clock time per frame (default 33.3)\n"
         "  --keys STRING       one key per frame; '.' means no key that frame\n"
         "  --paused            start paused\n"
-        "  --launch N          put N satellites in low Earth orbit first\n"
+        "  --launch N          put N extra satellites in low Earth orbit\n"
+        "  --scenario NAME     empty, leo (default), constellation, or transfer\n"
+        "  --settle N          run N simulated steps before the first frame\n"
         "  --help              this text");
 }
 
@@ -1001,8 +1141,10 @@ bool parseOptions(int argc, char** argv, Options& out) {
                 return false;
             }
             out.zoomPreset = static_cast<std::size_t>(n - 1);
+            out.zoomForced = true;
         } else if (arg == "--focus") {
             out.focus = next();
+            out.focusForced = true;
         } else if (arg == "--record") {
             out.recordFrames = std::atoi(next().c_str());
             if (out.recordFrames <= 0) {
@@ -1022,6 +1164,23 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.keys = next();
         } else if (arg == "--paused") {
             out.startPaused = true;
+        } else if (arg == "--scenario") {
+            const std::string name = next();
+            if (name == "empty")             out.scenario = Scenario::Empty;
+            else if (name == "leo")          out.scenario = Scenario::Leo;
+            else if (name == "constellation") out.scenario = Scenario::Constellation;
+            else if (name == "transfer")     out.scenario = Scenario::Transfer;
+            else {
+                std::fprintf(stderr,
+                             "--scenario wants empty, leo, constellation or transfer\n");
+                return false;
+            }
+        } else if (arg == "--settle") {
+            out.settleSteps = std::atoi(next().c_str());
+            if (out.settleSteps < 0) {
+                std::fprintf(stderr, "--settle wants a step count >= 0\n");
+                return false;
+            }
         } else if (arg == "--launch") {
             out.preLaunch = std::atoi(next().c_str());
             if (out.preLaunch < 0) {
@@ -1056,6 +1215,36 @@ std::size_t focusIndexFor(const SolarSystem& system, std::string_view name) {
         }
     }
     return 0;
+}
+
+/// Build the world, apply the scenario, and point the camera at what it wants.
+///
+/// Shared by all three entry points -- interactive, snapshot and record -- because
+/// three copies of "create world, apply scenario, maybe move the camera" is three
+/// places for them to drift apart. The QA harness renders the same starting state
+/// the interactive binary shows, which is the only way its results mean anything.
+void setUpWorld(World& world, Camera& camera, ViewState& view, const Options& options) {
+    const ScenarioView wanted = applyScenario(world, options.scenario);
+
+    for (int i = 0; i < options.preLaunch; ++i) {
+        world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
+    }
+
+    // An explicit --focus or --zoom always wins. The scenario is a default, and a
+    // default that overrides what the user typed is a bug.
+    view.focusIndex = options.focusForced
+                          ? focusIndexFor(world.system(), options.focus)
+                          : std::min(wanted.focusIndex, focusTargetCount(world) - 1);
+
+    if (!options.zoomForced && wanted.frameSpan > 0.0) {
+        camera.frame(wanted.frameSpan);
+    }
+
+    // Settle last, so the scenario's craft exist to be advanced.
+    if (options.settleSteps > 0) {
+        world.step(options.settleSteps);
+        static_cast<void>(world.drainEvents());
+    }
 }
 
 /// A Camera measured in half-block PIXELS, not character cells.
@@ -1099,11 +1288,8 @@ int runRecording(const Options& options) {
     omma::StepPacer pacer{std::chrono::seconds{1}, 1'000'000'000'000LL};
 
     ViewState view{};
-    view.focusIndex = focusIndexFor(world.system(), options.focus);
     view.paused = options.startPaused;
-    for (int i = 0; i < options.preLaunch; ++i) {
-        world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
-    }
+    setUpWorld(world, camera, view, options);
 
     std::error_code error;
     std::filesystem::create_directories(options.recordDir, error);
@@ -1206,10 +1392,7 @@ int main(int argc, char** argv) {
                     Epoch::fromCivil(options.date)};
 
         ViewState view{};
-        view.focusIndex = focusIndexFor(world.system(), options.focus);
-        for (int i = 0; i < options.preLaunch; ++i) {
-            world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
-        }
+        setUpWorld(world, camera, view, options);
 
         render(canvas, camera, world, view, 30.0, false, FrameTimings{});
 
@@ -1275,10 +1458,7 @@ int main(int argc, char** argv) {
     Camera camera = makePixelCamera(canvas, options);
 
     ViewState view{};
-    view.focusIndex = focusIndexFor(world.system(), options.focus);
-    for (int i = 0; i < options.preLaunch; ++i) {
-        world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
-    }
+    setUpWorld(world, camera, view, options);
 
     std::string frameBuffer;
     frameBuffer.reserve(static_cast<std::size_t>(size.columns * size.rows) * 24);

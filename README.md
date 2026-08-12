@@ -6,8 +6,8 @@ Real SI units. Real gravity. Planets propagated analytically, spacecraft
 integrated numerically, both behind one interface. Fixed timestep, seeded RNG,
 bit-reproducible runs. It renders in your terminal.
 
-> **Status:** `v0.4.0` — launch satellites, burn, and watch the predicted orbit
-> deform. Eleven bodies on a tilted board, shaded, in truecolour.
+> **Status:** `v0.5.0` — opens with satellites already in orbit. Launch more,
+> burn, and watch the predicted orbit deform.
 
 ```
                                                                                       ....
@@ -126,6 +126,22 @@ cmake --preset ci && cmake --build --preset ci && ctest --preset ci
 ```bash
 ./build/windows/bin/Release/omma-ascii
 ```
+
+Opens on the `leo` scenario: three satellites already in orbit on visibly
+different inclinations, camera framed on Earth. Nothing to press to see the point.
+
+```bash
+./build/windows/bin/Release/omma-ascii --scenario constellation
+./build/windows/bin/Release/omma-ascii --scenario transfer
+./build/windows/bin/Release/omma-ascii --scenario empty      # just the planets
+```
+
+| scenario | |
+|---|---|
+| `leo` *(default)* | ISS inclination, sun-synchronous, and a low-inclination comms orbit |
+| `constellation` | twelve satellites, four near-polar planes, Iridium-style Walker layout |
+| `transfer` | one craft with a 900 m/s prograde burn already commanded — apoapsis climbs from 400 km to 4 800 km while periapsis stays put |
+| `empty` | no spacecraft |
 
 | key | |
 |---|---|
