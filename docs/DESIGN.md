@@ -71,6 +71,13 @@ would make the next frame ask for even more steps — the spiral of death.
 Simulated time falling behind the wall clock is correct behaviour;
 pretending otherwise is not.
 
+**UTC ≈ TT, documented.** Epochs are treated as both civil UTC and the
+Terrestrial Time the ephemerides are defined in. The two scales are ~69 s
+apart (TT ran 69.184 s ahead of UTC as of 2026, and drifts with each leap
+second — a proper fix needs a hand-updated IERS leap-second table). That is
+far below the accuracy of the JPL approximate ephemerides this simulator
+uses, so the simplification is deliberate and lives in one place, `Epoch`.
+
 **No `-ffast-math`, ever.** It licenses the compiler to reassociate
 floating-point expressions, so `(a+b)+c` may become `a+(b+c)` — a different
 answer under IEEE-754, and a simulator that produces one trajectory in
