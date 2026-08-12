@@ -587,6 +587,7 @@ void handleKey(int key, ViewState& view, Camera& camera, const SolarSystem& syst
 struct Options {
     bool        snapshot{false};
     ColourDepth depth{ColourDepth::TrueColour};
+    bool        depthForced{false};
     BlockStyle  blocks{BlockStyle::HalfBlocks};
     bool        blocksForced{false};
     int         columns{0};
@@ -634,8 +635,10 @@ bool parseOptions(int argc, char** argv, Options& out) {
             else if (mode == "ascii" || mode == "none")      out.depth = ColourDepth::Ascii;
             else { std::fprintf(stderr, "--colour wants truecolour, ansi16 or ascii\n");
                    return false; }
+            out.depthForced = true;
         } else if (arg == "--no-colour" || arg == "--no-color") {
             out.depth = ColourDepth::Ascii;
+            out.depthForced = true;
         } else if (arg == "--blocks") {
             const std::string mode = next();
             if (mode == "half")      out.blocks = BlockStyle::HalfBlocks;
@@ -752,11 +755,22 @@ int main(int argc, char** argv) {
     con::InteractiveSession session;
     if (!session.ok()) {
         std::fprintf(stderr,
-                     "omma-ascii needs an interactive terminal.\n"
+                     "omma-ascii could not take over the terminal.\n"
+                     "  reason: %s\n"
+                     "\n"
                      "Run it directly rather than through a pipe, or use\n"
                      "  omma-ascii --snapshot\n"
-                     "for a single frame you can redirect.\n");
+                     "for a single frame you can redirect.\n",
+                     session.failureReason());
         return 1;
+    }
+
+    // NO_COLOR asks for no colour, not for no program. Drop to the monochrome
+    // density-ramp presentation rather than refusing to render, unless the user
+    // asked for a specific depth on the command line — an explicit flag is a
+    // clearer statement of intent than an environment variable.
+    if (con::colourDeclinedByEnvironment() && !options.depthForced) {
+        options.depth = ColourDepth::Ascii;
     }
 
     // Half blocks are three UTF-8 bytes each. If the console cannot be put into

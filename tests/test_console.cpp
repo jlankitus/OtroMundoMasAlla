@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstring>
+#include <string>
 
 namespace con = omma::console;
 
@@ -35,6 +36,40 @@ TEST_CASE("colour is disabled when stdout is not a terminal", "[core][console]")
 
     for (const std::string_view code : {con::reset(), con::bold(), con::green()}) {
         REQUIRE(code.empty());
+    }
+}
+
+TEST_CASE("taking over the terminal never fails because of colour",
+          "[core][console][regression]") {
+    // The bug: a user with NO_COLOR=1 in their environment could not run the
+    // interactive renderer AT ALL. It reported "needs an interactive terminal"
+    // while sitting in an obviously interactive terminal, because the session
+    // constructor bailed out as soon as colour was declined.
+    //
+    // https://no-color.org asks programs not to emit COLOUR. Cursor positioning,
+    // line erasure and the alternate screen buffer are not colour. The correct
+    // response to NO_COLOR is monochrome output, not refusal — and this program
+    // already had a monochrome presentation.
+    //
+    // Asserted on the REASON rather than on ok(), so the test is meaningful
+    // whether or not the machine running it happens to set NO_COLOR: under ctest
+    // stdout is always a pipe, so the session legitimately fails — but it must
+    // fail because of the pipe, never because of colour.
+    const omma::console::InteractiveSession session;
+    const std::string reason = session.failureReason();
+
+    INFO("failure reason: " << reason);
+    REQUIRE_FALSE(reason.empty());
+    REQUIRE(reason.find("NO_COLOR") == std::string::npos);
+    REQUIRE(reason.find("colour") == std::string::npos);
+    REQUIRE(reason.find("color") == std::string::npos);
+
+    SECTION("and the two capabilities are queryable independently") {
+        // If these ever collapse back into one function, the bug returns.
+        static_cast<void>(con::colourDeclinedByEnvironment());
+        static_cast<void>(con::supportsVirtualTerminal());
+        static_cast<void>(con::supportsAnsi());
+        SUCCEED("colour and escape-processing are separate queries");
     }
 }
 

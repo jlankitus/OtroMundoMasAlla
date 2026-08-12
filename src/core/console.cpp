@@ -74,27 +74,61 @@ bool tryEnableVirtualTerminal() noexcept {
 
 }  // namespace
 
+// TWO CAPABILITIES, NOT ONE. This distinction was a bug worth recording.
+//
+// "Can this terminal process escape sequences?" and "should this program use
+// colour?" are different questions with different answers, and the first version
+// answered both with enableAnsi().
+//
+// The consequence: a user with NO_COLOR=1 in their environment could not run the
+// interactive renderer AT ALL. It reported "needs an interactive terminal" while
+// sitting in an obviously interactive terminal, because the session constructor
+// gave up as soon as colour was declined.
+//
+// https://no-color.org asks programs not to emit COLOUR. Cursor positioning,
+// line erasure and the alternate screen buffer are not colour. Refusing to run
+// is a misreading of the convention -- and the right response is to render in
+// monochrome, which this program already knew how to do.
+bool g_vtEnabled = false;
+bool g_vtAsked = false;
+
+bool enableVirtualTerminal() noexcept {
+    if (g_vtAsked) {
+        return g_vtEnabled;
+    }
+    g_vtAsked = true;
+    // Escapes are meaningless down a pipe, but they are not harmful either; the
+    // caller decides. What matters is whether the console will interpret them.
+    g_vtEnabled = stdoutIsTerminal() && tryEnableVirtualTerminal();
+    return g_vtEnabled;
+}
+
+bool supportsVirtualTerminal() noexcept { return g_vtEnabled; }
+
 bool enableAnsi() noexcept {
     if (g_asked) {
         return g_ansi;
     }
     g_asked = true;
 
+    const bool vt = enableVirtualTerminal();
+
     // Honour the community convention: https://no-color.org
+    // This gates COLOUR only. It must never gate whether the program runs.
     if (environmentVariableIsSet("NO_COLOR")) {
         g_ansi = false;
         return g_ansi;
     }
     // Piping into a file or another program should produce clean text.
-    if (!stdoutIsTerminal()) {
-        g_ansi = false;
-        return g_ansi;
-    }
-    g_ansi = tryEnableVirtualTerminal();
+    g_ansi = vt;
     return g_ansi;
 }
 
 bool supportsAnsi() noexcept { return g_ansi; }
+
+bool colourDeclinedByEnvironment() noexcept {
+    return environmentVariableIsSet("NO_COLOR");
+}
 
 // The disabled case returns "" rather than a default-constructed string_view.
 // A default-constructed view's data() is nullptr, and passing nullptr to
@@ -201,17 +235,29 @@ bool enableUtf8Output() noexcept {
 bool supportsUtf8() noexcept { return g_utf8; }
 
 InteractiveSession::InteractiveSession() noexcept {
-    if (!enableAnsi()) {
-        return;   // not a terminal, or colour was declined: do not take it over
+    // Deliberately does NOT consult NO_COLOR. Taking over the terminal needs
+    // escape processing, not colour; see the note above enableVirtualTerminal().
+    if (!stdoutIsTerminal()) {
+        reason_ = "stdout is not a terminal (redirected to a file or a pipe)";
+        return;
     }
+    if (!enableVirtualTerminal()) {
+        reason_ = "the console refused ANSI escape processing "
+                  "(pre-1511 Windows, or a redirected handle)";
+        return;
+    }
+    // Resolve the colour decision now so callers can query it, but ignore the
+    // answer here.
+    static_cast<void>(enableAnsi());
 
 #if defined(_WIN32)
     // _getch() already bypasses line buffering and echo, so raw mode needs no
-    // extra work here. We do need VT input off nothing in particular; ANSI
-    // output was enabled by enableAnsi().
+    // extra work here; ANSI output was enabled by enableAnsi() above.
     ok_ = true;
+    reason_ = "";
 #else
     if (tcgetattr(STDIN_FILENO, &g_savedTermios) != 0) {
+        reason_ = "stdin is not a terminal (tcgetattr failed)";
         return;
     }
     g_termiosSaved = true;
@@ -221,9 +267,11 @@ InteractiveSession::InteractiveSession() noexcept {
     raw.c_cc[VMIN] = 0;    // read() returns immediately...
     raw.c_cc[VTIME] = 0;   // ...with whatever is available, possibly nothing
     if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) {
+        reason_ = "could not put the terminal into raw mode (tcsetattr failed)";
         return;
     }
     ok_ = true;
+    reason_ = "";
 #endif
 
     if (ok_) {

@@ -28,6 +28,26 @@ bool enableAnsi() noexcept;
 /// Result of the most recent enableAnsi(). False until it has been called.
 [[nodiscard]] bool supportsAnsi() noexcept;
 
+/// Enable escape-sequence processing, and report whether the console will honour
+/// it. Independent of colour.
+///
+/// SEPARATE FROM enableAnsi() ON PURPOSE, and the separation fixed a real bug.
+/// "Can this terminal process escapes?" and "should this program use colour?"
+/// are different questions. Conflating them meant a user with NO_COLOR=1 in
+/// their environment could not run the interactive renderer at all — it reported
+/// "needs an interactive terminal" while sitting in one.
+///
+/// https://no-color.org asks programs not to emit COLOUR. Cursor positioning,
+/// line erasure and the alternate screen buffer are not colour.
+bool enableVirtualTerminal() noexcept;
+
+/// Result of the most recent enableVirtualTerminal().
+[[nodiscard]] bool supportsVirtualTerminal() noexcept;
+
+/// True when NO_COLOR is set. Callers should drop to monochrome output, not
+/// refuse to run.
+[[nodiscard]] bool colourDeclinedByEnvironment() noexcept;
+
 /// Escape sequences that evaluate to "" when the terminal cannot render them,
 /// so call sites need no conditionals.
 [[nodiscard]] std::string_view reset() noexcept;
@@ -81,8 +101,17 @@ public:
     /// than render an animation into a pipe.
     [[nodiscard]] bool ok() const noexcept { return ok_; }
 
+    /// WHICH check failed, when ok() is false.
+    ///
+    /// "needs an interactive terminal" is a useless message when the terminal is
+    /// obviously interactive and the program is wrong about it. Reporting the
+    /// specific gate turns a guessing game into a one-line diagnosis — for
+    /// whoever is debugging it, and for a user whose console is genuinely odd.
+    [[nodiscard]] const char* failureReason() const noexcept { return reason_; }
+
 private:
-    bool ok_{false};
+    bool        ok_{false};
+    const char* reason_{"not attempted"};
 };
 
 /// Put stdout into binary mode, so the bytes we write are the bytes that arrive.
