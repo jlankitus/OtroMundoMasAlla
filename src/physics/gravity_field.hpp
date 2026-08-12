@@ -79,6 +79,13 @@ public:
     [[nodiscard]] std::size_t dominantSourceIndex(const Vec3& position) const noexcept;
 
     [[nodiscard]] std::span<const GravitySource> sources() const noexcept { return cache_; }
+
+    /// Cached position of one source. Use this instead of calling
+    /// IEphemeris::sample() again for a body the field has already sampled: the
+    /// sample costs a Kepler solve, and the cache costs a load.
+    [[nodiscard]] const Vec3& positionOf(std::size_t index) const noexcept {
+        return cache_[index].position;
+    }
     [[nodiscard]] std::size_t size() const noexcept { return cache_.size(); }
     [[nodiscard]] const IEphemeris& body(std::size_t index) const noexcept {
         return *bodies_[index];

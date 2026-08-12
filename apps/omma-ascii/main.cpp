@@ -132,7 +132,14 @@ constexpr Rgb kCraftOrbitFocused{90, 240, 180};
 /// "[falling behind]" when it binds -- which is the honest thing to show. Simulated
 /// time falling behind the wall clock is correct behaviour; pretending otherwise
 /// is the spiral of death.
-constexpr std::int64_t kIntegrationStepBudget = 24'000;
+/// Budget in CRAFT-steps per frame, not steps per frame.
+///
+/// Integrating twelve satellites costs twelve times what one does, so a fixed
+/// steps-per-frame cap holds the frame rate for a single craft and collapses it
+/// for a fleet -- measured at 7 fps with twelve. Dividing by the fleet size keeps
+/// a frame near its budget whatever is in orbit, and the honest consequence is
+/// that simulated time falls behind sooner with more craft. The HUD says so.
+constexpr std::int64_t kIntegrationCraftStepBudget = 6'000;
 
 /// Where the milliseconds in a frame actually went. Press 'f' to see it.
 ///
@@ -472,6 +479,18 @@ void drawScene(Canvas& canvas, Camera& camera, const World& world,
     }
 }
 
+/// Steps per frame the integrator can afford, given what is in orbit.
+std::int64_t stepBudgetFor(const World& world) {
+    const std::size_t craft = world.spacecraft().size();
+    if (craft == 0) {
+        // Nothing is integrated, so a step is one integer addition and warp is
+        // effectively free. This is the on-rails case.
+        return 1'000'000'000'000LL;
+    }
+    return std::max<std::int64_t>(
+        1, kIntegrationCraftStepBudget / static_cast<std::int64_t>(craft));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Focus
 //
@@ -787,10 +806,16 @@ void render(Canvas& canvas, Camera& camera, const World& world,
 // ─────────────────────────────────────────────────────────────────────────────
 enum class Scenario { Empty, Leo, Constellation, Transfer };
 
-/// What a scenario wants the camera to do, when the user has not said otherwise.
+/// What a scenario wants the camera and clock to do, absent instructions.
 struct ScenarioView {
     std::size_t focusIndex{0};
     double      frameSpan{0.0};      ///< 0 means "leave the camera alone"
+    /// Index into kWarpLadder. A scenario knows its own timescale better than a
+    /// global default does: planets want days per second, a low orbit wants
+    /// minutes, and a burn that lasts ten minutes wants close to real time. At one
+    /// day per second a satellite laps its planet fourteen times a second, which
+    /// is both unwatchable and pointlessly expensive to integrate.
+    std::size_t warpIndex{5};
 };
 
 LaunchRequest makeLaunchRequest(BodyId around, int index) {
@@ -818,7 +843,7 @@ LaunchRequest makeLaunchRequest(BodyId around, int index) {
 ScenarioView applyScenario(World& world, Scenario scenario) {
     switch (scenario) {
         case Scenario::Empty:
-            return {static_cast<std::size_t>(BodyId::Sun), 0.0};
+            return {static_cast<std::size_t>(BodyId::Sun), 0.0, 5};   // 1 day/s
 
         case Scenario::Leo: {
             // Three real mission profiles, chosen to look different from each
@@ -840,7 +865,7 @@ ScenarioView applyScenario(World& world, Scenario scenario) {
                 request.meanAnomalyRadians = omma::toRadians(orbit.phaseDeg);
                 world.launch(request);
             }
-            return {world.system().size(), 3.4e7};
+            return {world.system().size(), 3.4e7, 3};   // 1 hour/s: a lap every 1.5 s
         }
 
         case Scenario::Constellation: {
@@ -867,7 +892,7 @@ ScenarioView applyScenario(World& world, Scenario scenario) {
                     world.launch(request);
                 }
             }
-            return {world.system().size(), 4.2e7};
+            return {world.system().size(), 4.2e7, 2};   // 10 min/s: the pattern reads
         }
 
         case Scenario::Transfer: {
@@ -893,7 +918,7 @@ ScenarioView applyScenario(World& world, Scenario scenario) {
             // sits at a FOCUS of the ellipse, not its centre, so an
             // Earth-centred view has to reach the full apoapsis distance in one
             // direction while the tilt compresses it vertically.
-            return {world.system().size(), 4.5e7};
+            return {world.system().size(), 4.5e7, 1};   // 1 min/s: watch the burn
         }
     }
     return {0, 0.0};
@@ -1239,6 +1264,7 @@ void setUpWorld(World& world, Camera& camera, ViewState& view, const Options& op
     if (!options.zoomForced && wanted.frameSpan > 0.0) {
         camera.frame(wanted.frameSpan);
     }
+    view.warpIndex = std::min(wanted.warpIndex, kWarpLadder.size() - 1);
 
     // Settle last, so the scenario's craft exist to be advanced.
     if (options.settleSteps > 0) {
@@ -1328,9 +1354,7 @@ int runRecording(const Options& options) {
             camera_frame_hint = false;
         }
 
-        pacer.setMaxStepsPerFrame(world.spacecraft().empty()
-                                      ? 1'000'000'000'000LL
-                                      : kIntegrationStepBudget);
+        pacer.setMaxStepsPerFrame(stepBudgetFor(world));
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
         world.step(pacer.stepsForFrame(options.frameDeltaSeconds, warp));
 
@@ -1487,9 +1511,7 @@ int main(int argc, char** argv) {
             smoothedFps = 0.9 * smoothedFps + 0.1 / realDt;
         }
 
-        pacer.setMaxStepsPerFrame(world.spacecraft().empty()
-                                      ? 1'000'000'000'000LL
-                                      : kIntegrationStepBudget);
+        pacer.setMaxStepsPerFrame(stepBudgetFor(world));
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
         world.step(pacer.stepsForFrame(realDt, warp));
         clamped = pacer.lastFrameWasClamped();

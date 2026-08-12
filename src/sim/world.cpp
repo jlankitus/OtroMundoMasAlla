@@ -193,8 +193,16 @@ void World::detectCollisions() {
         }
         for (std::size_t i = 0; i < system_.size(); ++i) {
             const auto& body = *system_.bodies()[i];
+            // The field was just refreshed at this instant, so read the cached
+            // position rather than calling sample() again.
+            //
+            // The original version did call sample(), which is a Kepler solve, for
+            // every body for every craft on every step: 132 solves per step with
+            // twelve satellites, purely to ask "did anything hit a planet". It was
+            // the dominant cost in the whole tick and it was invisible, because
+            // sample() looks free at the call site.
             const double distanceToCentre =
-                distance(craft.state.position, body.sample(clock_.now()).position);
+                distance(craft.state.position, gravity_.positionOf(i));
             if (distanceToCentre < body.meanRadius()) {
                 craft.mode = PropagationMode::Destroyed;
                 emit({SimEvent::Kind::Collided, craft.id, clock_.now(), i,

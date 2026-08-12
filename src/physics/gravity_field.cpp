@@ -22,6 +22,27 @@ GravityField::GravityField(std::vector<const IEphemeris*> sources)
 }
 
 void GravityField::refresh(Epoch t) {
+    // MEMOISED ON THE EPOCH, and this is not a micro-optimisation.
+    //
+    // Every spacecraft in a step is integrated over the SAME four stage epochs, so
+    // a naive per-craft integrate() call re-samples the entire solar system four
+    // times per craft: 4N refreshes per step instead of 4. Each refresh solves
+    // Kepler's equation for eleven bodies, so with three craft that is 132 Kepler
+    // solves per step where twelve would do.
+    //
+    // Measured before the cache: 76 ms per frame at one simulated day per second
+    // with three satellites -- 13 fps against a 30 fps target, with the integrator
+    // dominating. The whole point of flattening the sources into a POD array was
+    // to stop paying per-craft costs for per-environment work, and calling refresh
+    // from inside the per-craft loop quietly undid it.
+    //
+    // Epoch is exact integer nanoseconds, so this comparison is exact. That
+    // matters: a float epoch would miss the cache on the last bit and the
+    // optimisation would silently do nothing.
+    if (refreshed_ && sampledAt_ == t) {
+        return;
+    }
+
     for (std::size_t i = 0; i < bodies_.size(); ++i) {
         cache_[i] = GravitySource{bodies_[i]->sample(t).position,
                                   bodies_[i]->gravitationalParameter()};
