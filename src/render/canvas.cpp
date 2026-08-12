@@ -347,6 +347,62 @@ void Canvas::disc(int cx, int cy, int radius, Rgb colour) noexcept {
     }
 }
 
+void Canvas::shadedDisc(int cx, int cy, int radius, Rgb colour,
+                        double lightX, double lightY, double lightZ,
+                        double ambient) noexcept {
+    if (radius <= 1) {
+        // Too small to shade meaningfully; shading a two-pixel planet just makes
+        // it dimmer and harder to see.
+        disc(cx, cy, radius, colour);
+        return;
+    }
+
+    const double length = std::sqrt(lightX * lightX + lightY * lightY + lightZ * lightZ);
+    if (!(length > 0.0)) {
+        disc(cx, cy, radius, colour);
+        return;
+    }
+    const double lx = lightX / length;
+    const double ly = lightY / length;
+    const double lz = lightZ / length;
+
+    const double r = static_cast<double>(radius);
+    const int rSquared = radius * radius;
+
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            const int distanceSquared = dx * dx + dy * dy;
+            if (distanceSquared > rSquared) {
+                continue;
+            }
+            const double nx = static_cast<double>(dx) / r;
+            const double ny = static_cast<double>(dy) / r;
+            const double nzSquared = 1.0 - (nx * nx + ny * ny);
+            const double nz = nzSquared > 0.0 ? std::sqrt(nzSquared) : 0.0;
+
+            const double lambert = nx * lx + ny * ly + nz * lz;
+            double brightness = ambient + (1.0 - ambient) * std::max(0.0, lambert);
+
+            // QUANTISED, and the reason is bandwidth rather than aesthetics.
+            //
+            // A continuous gradient gives every pixel of a planet its own colour,
+            // which defeats the colour-run compression in present() completely:
+            // adding shading took a frame from 15 KB to 48 KB, because each pixel
+            // now needs its own escape sequence.
+            //
+            // Snapping to 24 levels means neighbouring pixels usually share a
+            // colour, so the runs come back. Twenty-four steps across a
+            // terminator that is a few dozen pixels wide is below the point where
+            // banding is visible, so this costs nothing anyone can see and gets
+            // most of the bytes back.
+            constexpr double kLevels = 24.0;
+            brightness = std::floor(brightness * kLevels) / kLevels;
+
+            setPixel(cx + dx, cy + dy, colour.scaled(brightness));
+        }
+    }
+}
+
 void Canvas::glow(int cx, int cy, int radius, Rgb colour) noexcept {
     if (radius <= 0) {
         return;

@@ -18,5 +18,6 @@ target_link_libraries(omma-ascii
         omma::core
         omma::physics
         omma::render
+        omma::sim
         omma::compile_options
 )

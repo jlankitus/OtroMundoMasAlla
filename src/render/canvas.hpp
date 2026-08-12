@@ -194,6 +194,28 @@ public:
     /// a body never disappears entirely just because it is small on screen.
     void disc(int cx, int cy, int radius, Rgb colour) noexcept;
 
+    /// A disc shaded as a lit sphere, with a day/night terminator.
+    ///
+    /// Once a body is more than a couple of pixels across, a flat-filled circle
+    /// stops reading as a world and starts reading as a sticker. Recovering the
+    /// sphere costs one square root per pixel: for a unit sphere the surface
+    /// normal at offset (dx, dy) from the centre has
+    ///
+    ///     nz = sqrt(1 - (dx^2 + dy^2) / r^2)
+    ///
+    /// and Lambert's cosine law is then just the dot product of that normal with
+    /// the light direction. The terminator falls out for free — it is where the
+    /// dot product crosses zero — so the night side appears without being drawn.
+    ///
+    /// \param light    direction TOWARD the light, in screen space (x right,
+    ///                 y down, z toward the viewer). Need not be normalised.
+    /// \param ambient  floor brightness on the night side, 0..1. Not physical;
+    ///                 a pure-black night side makes a planet look like a bite
+    ///                 taken out of the starfield.
+    void shadedDisc(int cx, int cy, int radius, Rgb colour,
+                    double lightX, double lightY, double lightZ,
+                    double ambient = 0.10) noexcept;
+
     /// Radial falloff around a point, added rather than set. The Sun's corona.
     void glow(int cx, int cy, int radius, Rgb colour) noexcept;
 

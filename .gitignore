@@ -33,6 +33,10 @@ CMakeUserPresets.json
 # belongs in the repository.
 runs/
 telemetry/
+frames/
+qa_*/
+qa_*.png
+temporal_qa/
 *.omma-replay
 
 # ── OS ────────────────────────────────────────────────────────

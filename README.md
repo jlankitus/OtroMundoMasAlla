@@ -6,8 +6,8 @@ Real SI units. Real gravity. Planets propagated analytically, spacecraft
 integrated numerically, both behind one interface. Fixed timestep, seeded RNG,
 bit-reproducible runs. It renders in your terminal.
 
-> **Status:** `v0.3.0` — eleven bodies on a tilted board in truecolour, and a
-> validated numerical integrator ready to fly spacecraft through them.
+> **Status:** `v0.4.0` — launch satellites, burn, and watch the predicted orbit
+> deform. Eleven bodies on a tilted board, shaded, in truecolour.
 
 ```
                                                                                       ....
@@ -132,7 +132,11 @@ cmake --preset ci && cmake --build --preset ci && ctest --preset ci
 | `space` | pause / resume |
 | `-` `=` | time warp down / up, from real time to 20 years per second |
 | `[` `]` | zoom out / in |
-| `1`-`5` | zoom presets: Earth-Moon, inner system, to Jupiter, to Neptune, everything |
+| `1`-`6` | zoom presets: low orbit, Earth-Moon, inner system, to Jupiter, to Neptune, everything |
+| `L` | launch a satellite around the body in view |
+| `.` `,` | burn prograde / retrograde, 10 m/s a press |
+| `'` `;` | burn normal / anti-normal (changes inclination) |
+| `k` | cut the engine |
 | `r` `t` | tilt the board down / up |
 | `z` `x` | spin the board left / right |
 | `v` | snap between top-down and 2:1 dimetric |
@@ -239,7 +243,8 @@ the performance for reproducibility, and we pay it deliberately.
 - [x] physics: `IEphemeris`, Kepler propagation, real solar system data
 - [x] render: half-block truecolour canvas, dimetric camera, time warp, HUD
 - [x] physics: gravity field, four integrators, energy-conservation tests
-- [ ] **0.3** world, scheduler, spacecraft, launch and burn — *launch something*
+- [x] sim: world, spacecraft, launch, burns, propellant, collisions
+- [x] render: spacecraft, predicted paths, shaded bodies
 - [ ] **0.4** CI on Windows and Linux
 - [ ] **0.5** perturbations: J2, third-body, drag
 - [ ] **0.6** constellations, ground tracks, coverage

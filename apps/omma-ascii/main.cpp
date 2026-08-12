@@ -34,6 +34,7 @@
 #include "core/version.hpp"
 #include "physics/orbital_elements.hpp"
 #include "physics/solar_system.hpp"
+#include "sim/world.hpp"
 #include "render/camera.hpp"
 #include "render/canvas.hpp"
 
@@ -55,7 +56,11 @@ using omma::app::BodyStyle;
 using omma::app::styleFor;
 using omma::BodyId;
 using omma::Epoch;
+using omma::LaunchRequest;
 using omma::SolarSystem;
+using omma::Spacecraft;
+using omma::ThrustCommand;
+using omma::World;
 using omma::constants::kAu;
 using omma::constants::kSecondsPerDay;
 using omma::render::Camera;
@@ -90,13 +95,44 @@ constexpr std::array<WarpStep, 12> kWarpLadder{{
 
 struct ZoomPreset { double metresAcross; const char* label; };
 
-constexpr std::array<ZoomPreset, 5> kZoomPresets{{
+constexpr std::array<ZoomPreset, 6> kZoomPresets{{
+    {3.0e7,  "low orbit"},      // a 400 km orbit fills about a quarter of the view
     {1.2e9,  "Earth-Moon"},
     {3.6e11, "inner system"},
     {1.7e12, "to Jupiter"},
     {9.5e12, "to Neptune"},
     {1.6e13, "everything"},
 }};
+
+/// Framing used when something is launched, matching preset 1.
+constexpr double kLowOrbitSpan = 3.0e7;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spacecraft presentation.
+//
+// Deliberately the brightest thing on screen after the Sun. The planets are
+// scenery; the spacecraft is the subject, and at one or two pixels across it
+// needs every bit of contrast it can get.
+// ─────────────────────────────────────────────────────────────────────────────
+constexpr Rgb kCraftColour{120, 255, 170};      ///< a coasting craft
+constexpr Rgb kCraftBurning{255, 190, 90};      ///< engine lit
+constexpr Rgb kCraftDead{110, 90, 90};          ///< wreckage
+constexpr Rgb kCraftOrbit{40, 150, 110};        ///< its predicted path
+constexpr Rgb kCraftOrbitFocused{90, 240, 180};
+
+/// Warp is no longer free once anything is being integrated.
+///
+/// With every body analytic, advancing the clock a billion ticks cost one integer
+/// addition. A spacecraft changes that: each tick is four RK4 stages over eleven
+/// gravity sources, so the steps-per-frame cap has to come down to what the kernel
+/// can actually finish inside a frame. This is the promise the old comment made,
+/// now being paid.
+///
+/// The budget is per frame, shared across craft, and the HUD says
+/// "[falling behind]" when it binds -- which is the honest thing to show. Simulated
+/// time falling behind the wall clock is correct behaviour; pretending otherwise
+/// is the spiral of death.
+constexpr std::int64_t kIntegrationStepBudget = 24'000;
 
 /// Where the milliseconds in a frame actually went. Press 'f' to see it.
 ///
@@ -113,6 +149,11 @@ struct FrameTimings {
     double totalMs{0.0};
     std::size_t frameBytes{0};
 };
+
+/// Set when something has just been launched and the camera should zoom to it.
+/// A free variable rather than a ViewState field because it is a one-shot request
+/// from the input handler to the frame loop, not part of the view's state.
+bool camera_frame_hint = false;
 
 struct ViewState {
     std::size_t warpIndex{5};        // 1 day per second
@@ -143,12 +184,9 @@ struct ViewState {
 /// samples land many pixels apart and a point cloud reads as a dashed line;
 /// segments read as a curve. It also means 256 samples suffice at any zoom
 /// instead of needing thousands.
-void drawOrbit(Canvas& canvas, const Camera& camera,
-               const omma::KeplerEphemeris& body, Epoch t, Rgb colour) {
-    const auto elements = body.elementsAt(t);
-    const omma::Vec3 parentOrigin =
-        body.parent() != nullptr ? body.parent()->sample(t).position : omma::Vec3::zero();
-
+void drawEllipse(Canvas& canvas, const Camera& camera,
+                 const omma::OrbitalElements& elements,
+                 const omma::Vec3& parentOrigin, Rgb colour) {
     const double a = elements.semiMajorAxis;
     const double e = elements.eccentricity;
     if (!(a > 0.0) || e >= 1.0) {
@@ -223,6 +261,31 @@ void drawOrbit(Canvas& canvas, const Camera& camera,
     }
 }
 
+/// A celestial body's orbit.
+void drawOrbit(Canvas& canvas, const Camera& camera,
+               const omma::KeplerEphemeris& body, Epoch t, Rgb colour) {
+    drawEllipse(canvas, camera, body.elementsAt(t),
+                body.parent() != nullptr ? body.parent()->sample(t).position
+                                         : omma::Vec3::zero(),
+                colour);
+}
+
+/// A spacecraft's PREDICTED path: the osculating ellipse it is on right now.
+///
+/// "Osculating" means kissing -- the two-body orbit that matches the craft's
+/// current position and velocity exactly. It is where the craft would go if
+/// nothing else ever touched it, so it shifts continuously under perturbation and
+/// jumps the instant the engine lights. Watching it deform IS the feedback that
+/// makes flying by hand possible: you point the nose, hold the burn, and see the
+/// far side of the orbit climb.
+void drawPredictedPath(Canvas& canvas, const Camera& camera, const World& world,
+                       const Spacecraft& craft, bool focused) {
+    const auto& central = *world.system().bodies()[craft.centralBodyIndex];
+    drawEllipse(canvas, camera, world.elementsOf(craft),
+                central.sample(world.now()).position,
+                focused ? kCraftOrbitFocused : kCraftOrbit);
+}
+
 /// Apparent radius of a body in pixels.
 ///
 /// True to scale when zoomed in, clamped to a floor of one pixel so a planet
@@ -237,8 +300,10 @@ int apparentRadiusPixels(double bodyRadiusMetres, double metresPerPixel) {
     return std::clamp(static_cast<int>(pixels), 1, 200);
 }
 
-void drawScene(Canvas& canvas, Camera& camera, const SolarSystem& system,
-               Epoch t, const ViewState& view) {
+void drawScene(Canvas& canvas, Camera& camera, const World& world,
+               const ViewState& view) {
+    const SolarSystem& system = world.system();
+    const Epoch t = world.now();
     const double metresPerPixel = camera.metresPerRow();
 
     if (view.showOrbits) {
@@ -299,8 +364,70 @@ void drawScene(Canvas& canvas, Camera& camera, const SolarSystem& system,
         }
     }
 
+    // Bodies, shaded as lit spheres.
+    //
+    // The light direction is worked out in SCREEN space, by projecting the Sun and
+    // the body and taking the difference. That is a cheap trick with a real
+    // limitation: it captures where the Sun is left-or-right and up-or-down of the
+    // body, but not how far in front or behind, so the z component is supplied as
+    // a constant lean toward the viewer. A physically exact version would rotate
+    // the world-space Sun direction into the camera basis; this looks
+    // indistinguishable at these sizes and costs two projections instead of a
+    // matrix.
+    const auto sunScreen = camera.project(system[BodyId::Sun].sample(t).position);
+
     for (const Visible& v : visible) {
-        canvas.disc(v.point.x, v.point.y, v.radius, styleFor(v.index).colour);
+        const Rgb colour = styleFor(v.index).colour;
+
+        if (v.index == static_cast<std::size_t>(BodyId::Sun) || v.radius <= 1) {
+            // The Sun is the light source, so it has no dark side to show.
+            canvas.disc(v.point.x, v.point.y, v.radius, colour);
+            continue;
+        }
+
+        double lx = static_cast<double>(sunScreen.x - v.point.x);
+        double ly = static_cast<double>(sunScreen.y - v.point.y);
+        if (std::abs(lx) < 1e-9 && std::abs(ly) < 1e-9) {
+            lx = 1.0;   // degenerate: Sun exactly behind the body on screen
+        }
+        canvas.shadedDisc(v.point.x, v.point.y, v.radius, colour, lx, ly, 0.55);
+    }
+
+    // ── spacecraft ──────────────────────────────────────────────────────────
+    // After the planets, so a satellite is never hidden behind the body it
+    // orbits, and drawn with a glow while burning so a lit engine is visible even
+    // when the craft itself is one pixel.
+    const auto& fleet = world.spacecraft();
+    for (std::size_t i = 0; i < fleet.size(); ++i) {
+        const Spacecraft& craft = fleet[i];
+        const bool focused = view.focusIndex == system.size() + i;
+
+        if (view.showOrbits && craft.isAlive()) {
+            drawPredictedPath(canvas, camera, world, craft, focused);
+        }
+
+        const auto point = camera.project(craft.state.position);
+        if (!point.onScreen) {
+            continue;
+        }
+
+        const bool burning = craft.thrust.active && craft.thrust.throttle > 0.0;
+        const Rgb colour = !craft.isAlive() ? kCraftDead
+                         : burning          ? kCraftBurning
+                                            : kCraftColour;
+        if (burning) {
+            canvas.glow(point.x, point.y, 4, colour.scaled(0.45));
+        }
+        canvas.disc(point.x, point.y, focused ? 1 : 0, colour);
+
+        if (view.showLabels) {
+            const int cellY = point.y / 2;
+            if (canvas.spanIsClear(point.x + 2, cellY,
+                                   static_cast<int>(craft.name.size()))) {
+                canvas.text(point.x + 2, cellY, craft.name,
+                            focused ? Ink::BrightWhite : Ink::BrightGreen);
+            }
+        }
     }
 
     // Labels last, and only where they fit.
@@ -346,6 +473,41 @@ void drawScene(Canvas& canvas, Camera& camera, const SolarSystem& system,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Focus
+//
+// One index over bodies THEN spacecraft, so `tab` walks the whole scene and the
+// camera-follow code does not care which kind of thing it is looking at. Adding a
+// second "focusCraftIndex" field would have meant every read site asking "which
+// one is set", which is the shape that grows inconsistent states.
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::size_t focusTargetCount(const World& world) {
+    return world.system().size() + world.spacecraft().size();
+}
+
+omma::Vec3 focusPosition(const World& world, const ViewState& view) {
+    const std::size_t bodies = world.system().size();
+    if (view.focusIndex < bodies) {
+        return world.system().bodies()[view.focusIndex]->sample(world.now()).position;
+    }
+    const std::size_t craftIndex = view.focusIndex - bodies;
+    if (craftIndex < world.spacecraft().size()) {
+        return world.spacecraft()[craftIndex].state.position;
+    }
+    return omma::Vec3::zero();
+}
+
+const Spacecraft* focusedCraft(const World& world, const ViewState& view) {
+    const std::size_t bodies = world.system().size();
+    if (view.focusIndex < bodies) {
+        return nullptr;
+    }
+    const std::size_t craftIndex = view.focusIndex - bodies;
+    return craftIndex < world.spacecraft().size() ? &world.spacecraft()[craftIndex]
+                                                  : nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HUD
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -361,13 +523,20 @@ std::string formatDistance(double metres) {
     return std::string{buffer};
 }
 
-void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& clock,
-             const Camera& camera, const ViewState& view, double framesPerSecond,
-             bool clamped, const FrameTimings& timings) {
+void drawHud(Canvas& canvas, const World& world, const Camera& camera,
+             const ViewState& view, double framesPerSecond, bool clamped,
+             const FrameTimings& timings) {
+    const SolarSystem& system = world.system();
+    const omma::SimClock& clock = world.clock();
     const int h = canvas.height();
     const Epoch t = clock.now();
-    const auto& focus = system[static_cast<BodyId>(view.focusIndex)];
-    const auto* kepler = dynamic_cast<const omma::KeplerEphemeris*>(&focus);
+
+    const Spacecraft* craft = focusedCraft(world, view);
+    const std::size_t bodyIndex = std::min(view.focusIndex, system.size() - 1);
+    const auto& focus = *system.bodies()[bodyIndex];
+    const auto* kepler = craft != nullptr
+                             ? nullptr
+                             : dynamic_cast<const omma::KeplerEphemeris*>(&focus);
 
     // Clear the strips the HUD occupies. Pixels showing through between the
     // letters turns a readout into noise.
@@ -376,7 +545,7 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
     // Only as many rows as the panel actually writes. Blanking a fixed 11 rows
     // took a visible rectangular bite out of the scene even when the focused
     // body was the Sun and the panel used two of them.
-    canvas.fill(0, 2, 27, kepler != nullptr ? 10 : 2);
+    canvas.fill(0, 2, 30, (kepler != nullptr || craft != nullptr) ? 12 : 2);
 
     char line[256];
     std::snprintf(line, sizeof(line), " %s   %s ",
@@ -395,20 +564,70 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
                   formatDistance(camera.viewWidthMetres()).c_str(),
                   omma::toDegrees(camera.elevation()),
                   omma::toDegrees(camera.azimuth()),
-                  focus.name().data());
+                  craft != nullptr ? craft->name.c_str() : focus.name().data());
     canvas.text(1, h - 2, line, view.paused ? Ink::BrightYellow : Ink::BrightGreen);
 
     if (clamped) {
         canvas.text(canvas.width() - 18, h - 2, "[falling behind]", Ink::BrightRed);
     }
 
-    canvas.text(1, h - 1,
-                " space pause  -/= warp  [/] zoom  1-5 presets  r/t tilt  z/x spin"
-                "  tab focus  o orbits  ? help  q quit",
-                Ink::White);
+    std::snprintf(line, sizeof(line),
+                  " space pause  -/= warp  [/] zoom  1-6 presets  r/t tilt  z/x spin"
+                  "  tab focus  L launch  ,/. burn  %zu craft  ? help  q quit",
+                  world.spacecraft().size());
+    canvas.text(1, h - 1, line, Ink::White);
 
     // ── focus panel ─────────────────────────────────────────────────────────
     int row = 2;
+
+    if (craft != nullptr) {
+        canvas.text(1, row++, craft->name, Ink::BrightWhite);
+        const auto elements = world.elementsOf(*craft);
+        const auto& central = *system.bodies()[craft->centralBodyIndex];
+        const double gm = central.gravitationalParameter();
+
+        const struct { const char* label; std::string value; } fields[] = {
+            {"orbits", std::string{central.name()}},
+            {"alt",    formatDistance(world.altitudeOf(*craft))},
+            {"peri",   formatDistance(periapsisRadius(elements) - central.meanRadius())},
+            {"apo",    formatDistance(apoapsisRadius(elements) - central.meanRadius())},
+            {"e",      [&] { char b[24];
+                             std::snprintf(b, sizeof(b), "%.5f", elements.eccentricity);
+                             return std::string{b}; }()},
+            {"i",      [&] { char b[24];
+                             std::snprintf(b, sizeof(b), "%.2f deg",
+                                           omma::toDegrees(elements.inclination));
+                             return std::string{b}; }()},
+            {"period", [&] { const double m = orbitalPeriod(elements, gm) / 60.0;
+                             char b[24];
+                             std::snprintf(b, sizeof(b), "%.1f min", m);
+                             return std::string{b}; }()},
+            {"prop",   [&] { char b[24];
+                             std::snprintf(b, sizeof(b), "%.1f kg", craft->propellantKg);
+                             return std::string{b}; }()},
+            {"dv left",[&] { char b[24];
+                             std::snprintf(b, sizeof(b), "%.0f m/s",
+                                           craft->remainingDeltaVMps());
+                             return std::string{b}; }()},
+            {"dv used",[&] { char b[24];
+                             std::snprintf(b, sizeof(b), "%.1f m/s",
+                                           craft->deltaVSpentMps);
+                             return std::string{b}; }()},
+        };
+        for (const auto& [label, value] : fields) {
+            std::snprintf(line, sizeof(line), "  %-7s", label);
+            canvas.text(1, row, line, Ink::BrightBlack);
+            canvas.text(10, row, value, Ink::BrightCyan);
+            ++row;
+        }
+        if (craft->thrust.active) {
+            canvas.text(1, row, "  BURNING", Ink::BrightYellow);
+        } else if (!craft->isAlive()) {
+            canvas.text(1, row, "  DESTROYED", Ink::BrightRed);
+        }
+        return;
+    }
+
     canvas.text(1, row++, focus.name(), Ink::BrightWhite);
     if (kepler != nullptr) {
         const auto elements = kepler->elementsAt(t);
@@ -479,12 +698,16 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
             "|  space    pause / resume                    |",
             "|  - =      time warp down / up               |",
             "|  [ ]      zoom out / in                     |",
-            "|  1 - 5    zoom presets                      |",
+            "|  1 - 6    zoom presets (1 = low orbit)      |",
             "|  r t      tilt the board down / up           |",
             "|  z x      spin the board left / right        |",
             "|  v        toggle top-down / dimetric         |",
             "|  w a s d  pan          c  re-centre         |",
             "|  tab / n  next body    p  previous body     |",
+            "|  L        launch a satellite here           |",
+            "|  . ,      burn prograde / retrograde        |",
+            "|  ' ;      burn normal / anti-normal         |",
+            "|  k        cut the engine                    |",
             "|  o l      orbit trails / labels             |",
             "|  f        frame timing breakdown            |",
             "|  ?        this panel   q / esc  quit        |",
@@ -500,10 +723,9 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
     }
 }
 
-void render(Canvas& canvas, Camera& camera, const SolarSystem& system,
-            const omma::SimClock& clock, const ViewState& view,
-            double framesPerSecond, bool clamped, const FrameTimings& timings) {
-    const Epoch t = clock.now();
+void render(Canvas& canvas, Camera& camera, const World& world,
+            const ViewState& view, double framesPerSecond, bool clamped,
+            const FrameTimings& timings) {
     canvas.clear();
     // Deep space rather than pure black: a hint of blue reads as sky instead of
     // as a hole, and gives the dimmest orbit line something to sit against.
@@ -512,17 +734,78 @@ void render(Canvas& canvas, Camera& camera, const SolarSystem& system,
             canvas.setPixel(px, py, omma::app::kSpace);
         }
     }
-    camera.setCentre(system[static_cast<BodyId>(view.focusIndex)].sample(t).position
-                     + view.panOffset);
-    drawScene(canvas, camera, system, t, view);
-    drawHud(canvas, system, clock, camera, view, framesPerSecond, clamped, timings);
+    camera.setCentre(focusPosition(world, view) + view.panOffset);
+    drawScene(canvas, camera, world, view);
+    drawHud(canvas, world, camera, view, framesPerSecond, clamped, timings);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input
 // ─────────────────────────────────────────────────────────────────────────────
 
-void handleKey(int key, ViewState& view, Camera& camera, const SolarSystem& system) {
+/// Put a satellite in low orbit around whichever body is currently in view.
+///
+/// A 400 km circular orbit, inclined 51.6 degrees -- the ISS inclination, chosen
+/// because it is the one that reads clearly on a tilted display: an equatorial
+/// orbit at 30 degrees of camera tilt looks like a flat line, which was the whole
+/// argument for having tilt in the first place.
+///
+/// If the focus is a spacecraft, or something without a surface to orbit, it falls
+/// back to Earth. Refusing to launch because the camera happens to be pointed at
+/// the Sun would be technically defensible and annoying.
+LaunchRequest makeLaunchRequest(BodyId around, int index) {
+    LaunchRequest request{};
+    char name[24];
+    std::snprintf(name, sizeof(name), "OMMA-%d", index);
+    request.name = name;
+    request.aroundBody = around;
+    request.altitudeMetres = 400.0e3;
+    // 51.6 degrees, the ISS inclination, chosen because it reads clearly on a
+    // tilted display: an equatorial orbit seen at 30 degrees of camera tilt looks
+    // like a flat line, which was the whole argument for having tilt.
+    request.inclinationRadians = omma::toRadians(51.6);
+    // Spread a fleet around the orbit and across planes so it does not stack into
+    // one pixel.
+    request.meanAnomalyRadians = omma::toRadians(37.0 * static_cast<double>(index));
+    request.longitudeOfAscendingNodeRadians =
+        omma::toRadians(23.0 * static_cast<double>(index));
+    request.propellantKg = 80.0;
+    request.maxThrustNewtons = 400.0;   // ~1.4 m/s^2: burns take seconds, not hours
+    return request;
+}
+
+void launchFromFocus(World& world, ViewState& view, int index) {
+    const std::size_t bodies = world.system().size();
+    std::size_t around = view.focusIndex < bodies ? view.focusIndex
+                                                  : static_cast<std::size_t>(BodyId::Earth);
+    if (around == static_cast<std::size_t>(BodyId::Sun)) {
+        around = static_cast<std::size_t>(BodyId::Earth);
+    }
+
+    const auto id = world.launch(makeLaunchRequest(static_cast<BodyId>(around), index));
+    if (id.isValid()) {
+        // Follow what you just launched, and frame it. Launching something and
+        // then having to hunt for it is a bad first five seconds.
+        view.focusIndex = bodies + world.spacecraft().size() - 1;
+        view.panOffset = omma::Vec3::zero();
+        camera_frame_hint = true;
+    }
+}
+
+/// Fire the focused craft's engine for a fixed slice of delta-v.
+///
+/// Ten metres per second per press: small enough to steer with, big enough to see
+/// the predicted path move. Ignored when the focus is not a spacecraft, rather
+/// than beeping about it.
+void burnFocused(World& world, const ViewState& view, ThrustCommand::Frame frame) {
+    const Spacecraft* craft = focusedCraft(world, view);
+    if (craft == nullptr || !craft->isAlive()) {
+        return;
+    }
+    world.commandDeltaV(craft->id, frame, 10.0);
+}
+
+void handleKey(int key, ViewState& view, Camera& camera, World& world) {
     const double panStep = camera.metresPerRow() * 12.0;
     constexpr double kTiltStep = 3.0 * omma::constants::kPi / 180.0;
     constexpr double kSpinStep = 6.0 * omma::constants::kPi / 180.0;
@@ -541,7 +824,7 @@ void handleKey(int key, ViewState& view, Camera& camera, const SolarSystem& syst
         case ']': camera.zoomBy(1.0 / 1.35); break;
         case '[': camera.zoomBy(1.35); break;
 
-        case '1': case '2': case '3': case '4': case '5':
+        case '1': case '2': case '3': case '4': case '5': case '6':
             camera.frame(kZoomPresets[static_cast<std::size_t>(key - '1')].metresAcross);
             break;
 
@@ -563,17 +846,40 @@ void handleKey(int key, ViewState& view, Camera& camera, const SolarSystem& syst
         case 'd': case 'D': view.panOffset.x += panStep; break;
         case 'c': case 'C': view.panOffset = omma::Vec3::zero(); break;
 
-        case '\t': case 'n': case 'N':
-            view.focusIndex = (view.focusIndex + 1) % system.size();
+        case '\t': case 'n': case 'N': {
+            const std::size_t count = focusTargetCount(world);
+            view.focusIndex = (view.focusIndex + 1) % count;
             view.panOffset = omma::Vec3::zero();
             break;
-        case 'p': case 'P':
-            view.focusIndex = (view.focusIndex + system.size() - 1) % system.size();
+        }
+        case 'p': case 'P': {
+            const std::size_t count = focusTargetCount(world);
+            view.focusIndex = (view.focusIndex + count - 1) % count;
             view.panOffset = omma::Vec3::zero();
+            break;
+        }
+
+        // ── flying things ───────────────────────────────────────────────────
+        // Uppercase L launches; lowercase l toggles labels. Case-sensitive
+        // bindings are worth avoiding in general, but "launch" deserves to be the
+        // shifted one: it is the only key here that permanently changes the world,
+        // and a stray keypress should not put a satellite in orbit.
+        case 'L':
+            launchFromFocus(world, view,
+                            static_cast<int>(world.spacecraft().size()) + 1);
+            break;
+        case '.': burnFocused(world, view, ThrustCommand::Frame::Prograde); break;
+        case ',': burnFocused(world, view, ThrustCommand::Frame::Retrograde); break;
+        case '\'': burnFocused(world, view, ThrustCommand::Frame::Normal); break;
+        case ';': burnFocused(world, view, ThrustCommand::Frame::AntiNormal); break;
+        case 'k': case 'K':
+            if (const Spacecraft* c = focusedCraft(world, view); c != nullptr) {
+                world.cancelBurn(c->id);
+            }
             break;
 
         case 'o': case 'O': view.showOrbits = !view.showOrbits; break;
-        case 'l': case 'L': view.showLabels = !view.showLabels; break;
+        case 'l': view.showLabels = !view.showLabels; break;
         case '?': case 'h': case 'H': view.showHelp = !view.showHelp; break;
         case 'f': case 'F': view.showTimings = !view.showTimings; break;
         default: break;
@@ -595,7 +901,7 @@ struct Options {
     bool        blocksForced{false};
     int         columns{0};
     int         rows{0};
-    std::size_t zoomPreset{3};
+    std::size_t zoomPreset{4};   // "to Neptune"; see kZoomPresets
     std::string focus{"Sun"};
     omma::CivilTime date{2026, 8, 6, 12, 0, 0.0};
     double      elevationDeg{30.0};
@@ -617,6 +923,13 @@ struct Options {
     double      frameDeltaSeconds{1.0 / 30.0};
     std::string keys;             ///< one character per frame; '.' means none
     bool        startPaused{false};
+
+    /// Pre-launch this many satellites before the first frame.
+    ///
+    /// Exists so the spacecraft rendering path is reachable from --snapshot, which
+    /// takes no keystrokes. A feature that only the interactive binary can produce
+    /// is a feature the QA harness cannot check.
+    int         preLaunch{0};
 };
 
 void printUsage() {
@@ -628,7 +941,7 @@ void printUsage() {
         "  --colour MODE       truecolour (default), ansi16, or ascii\n"
         "  --blocks MODE       half (default; needs a UTF-8 console) or full\n"
         "  --size WxH          override the terminal size, in character cells\n"
-        "  --zoom N            zoom preset 1-5 (Earth-Moon .. everything)\n"
+        "  --zoom N            zoom preset 1-6 (low orbit .. everything)\n"
         "  --focus NAME        centre on a body, e.g. Earth\n"
         "  --date YYYY-MM-DD   start epoch\n"
         "  --tilt DEG          camera elevation; 90 is top-down, 30 is dimetric\n"
@@ -640,6 +953,7 @@ void printUsage() {
         "  --frame-delta MS    synthetic wall-clock time per frame (default 33.3)\n"
         "  --keys STRING       one key per frame; '.' means no key that frame\n"
         "  --paused            start paused\n"
+        "  --launch N          put N satellites in low Earth orbit first\n"
         "  --help              this text");
 }
 
@@ -708,6 +1022,12 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.keys = next();
         } else if (arg == "--paused") {
             out.startPaused = true;
+        } else if (arg == "--launch") {
+            out.preLaunch = std::atoi(next().c_str());
+            if (out.preLaunch < 0) {
+                std::fprintf(stderr, "--launch wants a count >= 0\n");
+                return false;
+            }
         } else if (arg == "--tilt") {
             out.elevationDeg = std::atof(next().c_str());
         } else if (arg == "--spin") {
@@ -768,18 +1088,22 @@ Camera makePixelCamera(const Canvas& canvas, const Options& options) {
 /// the synthetic rate rather than exponentially smoothed, so a paused recording
 /// is byte-identical frame to frame — which turns "does it flicker" into a
 /// one-line check.
-int runRecording(const SolarSystem& system, const Options& options) {
+int runRecording(const Options& options) {
     const int columns = options.columns > 0 ? options.columns : 120;
     const int rows = options.rows > 0 ? options.rows : 36;
 
     Canvas canvas{columns, rows};
     Camera camera = makePixelCamera(canvas, options);
-    omma::SimClock clock{std::chrono::seconds{1}, Epoch::fromCivil(options.date)};
+    World world{SolarSystem::standard(), std::chrono::seconds{1},
+                Epoch::fromCivil(options.date)};
     omma::StepPacer pacer{std::chrono::seconds{1}, 1'000'000'000'000LL};
 
     ViewState view{};
-    view.focusIndex = focusIndexFor(system, options.focus);
+    view.focusIndex = focusIndexFor(world.system(), options.focus);
     view.paused = options.startPaused;
+    for (int i = 0; i < options.preLaunch; ++i) {
+        world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
+    }
 
     std::error_code error;
     std::filesystem::create_directories(options.recordDir, error);
@@ -793,19 +1117,40 @@ int runRecording(const SolarSystem& system, const Options& options) {
     std::string frame;
 
     for (int i = 0; i < options.recordFrames; ++i) {
-        if (static_cast<std::size_t>(i) < options.keys.size() && options.keys[static_cast<std::size_t>(i)] != '.') {
-            handleKey(options.keys[static_cast<std::size_t>(i)], view, camera, system);
-            if (!view.running) {
-                break;
+        // '.' means "no key" in a script, which now collides with the prograde
+        // burn binding. Scripts use '@' for prograde instead; the interactive
+        // binding stays '.' because that is where a thumb expects it.
+        if (static_cast<std::size_t>(i) < options.keys.size()) {
+            const char scripted = options.keys[static_cast<std::size_t>(i)];
+            if (scripted != '.') {
+                // '@' is the script's spelling of the prograde-burn key, because
+                // '.' is already spoken for as "no key this frame". Translating
+                // after the no-key test, not before it -- doing it the other way
+                // round silently swallowed every scripted burn.
+                const int key = (scripted == '@') ? '.' : scripted;
+                handleKey(key, view, camera, world);
+                if (!view.running) {
+                    break;
+                }
             }
         }
+        // Same one-shot framing the interactive loop does. Without it a scripted
+        // launch records 45 frames of an invisible satellite, which is exactly what
+        // happened the first time.
+        if (camera_frame_hint) {
+            camera.frame(kLowOrbitSpan);
+            camera_frame_hint = false;
+        }
 
+        pacer.setMaxStepsPerFrame(world.spacecraft().empty()
+                                      ? 1'000'000'000'000LL
+                                      : kIntegrationStepBudget);
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
-        clock.step(pacer.stepsForFrame(options.frameDeltaSeconds, warp));
+        world.step(pacer.stepsForFrame(options.frameDeltaSeconds, warp));
 
         // Timings are deliberately zeroed rather than measured: a recording must
         // not depend on how fast the machine writing it happens to be.
-        render(canvas, camera, system, clock, view, reportedFps,
+        render(canvas, camera, world, view, reportedFps,
                pacer.lastFrameWasClamped(), FrameTimings{});
         canvas.present(frame, options.depth, options.blocks, /*homeCursor=*/true);
 
@@ -847,11 +1192,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    const SolarSystem system = SolarSystem::standard();
-
     // ── record: the live loop, headless and deterministic ───────────────────
     if (options.recordFrames > 0) {
-        return runRecording(system, options);
+        return runRecording(options);
     }
 
     // ── snapshot: one frame, no terminal takeover ───────────────────────────
@@ -859,12 +1202,16 @@ int main(int argc, char** argv) {
         Canvas canvas{options.columns > 0 ? options.columns : 110,
                       options.rows > 0 ? options.rows : 34};
         Camera camera = makePixelCamera(canvas, options);
-        omma::SimClock snapshotClock{std::chrono::seconds{1}, Epoch::fromCivil(options.date)};
+        World world{SolarSystem::standard(), std::chrono::seconds{1},
+                    Epoch::fromCivil(options.date)};
 
         ViewState view{};
-        view.focusIndex = focusIndexFor(system, options.focus);
+        view.focusIndex = focusIndexFor(world.system(), options.focus);
+        for (int i = 0; i < options.preLaunch; ++i) {
+            world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
+        }
 
-        render(canvas, camera, system, snapshotClock, view, 30.0, false, FrameTimings{});
+        render(canvas, camera, world, view, 30.0, false, FrameTimings{});
 
         // Colour is honoured as asked even when piped: a snapshot is often
         // captured deliberately, and forcing it to plain text would make
@@ -913,13 +1260,14 @@ int main(int argc, char** argv) {
         options.blocks = BlockStyle::FullCells;
     }
 
-    omma::SimClock clock{std::chrono::seconds{1}, Epoch::fromCivil(options.date)};
+    World world{SolarSystem::standard(), std::chrono::seconds{1},
+                Epoch::fromCivil(options.date)};
 
-    // maxStepsPerFrame is deliberately enormous. That clamp bounds INTEGRATION
-    // work per frame, and nothing here is being integrated: every body is
-    // analytic, so advancing the tick count is one integer add whether it is by
-    // one or by a billion. When spacecraft arrive this comes back down to what
-    // the RK4 kernel can actually finish inside a frame.
+    // The cap is set every frame, not once. With no spacecraft it is effectively
+    // infinite -- every body is analytic, so advancing the tick count is one
+    // integer add whether it is by one or by a billion. The moment something is
+    // being integrated it drops to what the RK4 kernel can finish inside a frame,
+    // which is the promise the old comment here made.
     omma::StepPacer pacer{std::chrono::seconds{1}, 1'000'000'000'000LL};
 
     auto size = con::terminalSize();
@@ -927,7 +1275,10 @@ int main(int argc, char** argv) {
     Camera camera = makePixelCamera(canvas, options);
 
     ViewState view{};
-    view.focusIndex = focusIndexFor(system, options.focus);
+    view.focusIndex = focusIndexFor(world.system(), options.focus);
+    for (int i = 0; i < options.preLaunch; ++i) {
+        world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
+    }
 
     std::string frameBuffer;
     frameBuffer.reserve(static_cast<std::size_t>(size.columns * size.rows) * 24);
@@ -942,7 +1293,11 @@ int main(int argc, char** argv) {
         // Drain the key queue rather than reading one per frame; a held key
         // otherwise builds a backlog that keeps acting long after release.
         while (const int key = con::pollKey()) {
-            handleKey(key, view, camera, system);
+            handleKey(key, view, camera, world);
+        }
+        if (camera_frame_hint) {
+            camera.frame(kLowOrbitSpan);
+            camera_frame_hint = false;
         }
 
         const auto frameStart = Clock::now();
@@ -952,9 +1307,16 @@ int main(int argc, char** argv) {
             smoothedFps = 0.9 * smoothedFps + 0.1 / realDt;
         }
 
+        pacer.setMaxStepsPerFrame(world.spacecraft().empty()
+                                      ? 1'000'000'000'000LL
+                                      : kIntegrationStepBudget);
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
-        clock.step(pacer.stepsForFrame(realDt, warp));
+        world.step(pacer.stepsForFrame(realDt, warp));
         clamped = pacer.lastFrameWasClamped();
+
+        // Events are drained every frame whether or not anyone reads them, so the
+        // queue cannot grow without bound in a long session.
+        static_cast<void>(world.drainEvents());
 
         const auto current = con::terminalSize();
         if (current.columns != size.columns || current.rows != size.rows) {
@@ -965,7 +1327,7 @@ int main(int argc, char** argv) {
         }
 
         const auto drawStart = Clock::now();
-        render(canvas, camera, system, clock, view, smoothedFps, clamped, timings);
+        render(canvas, camera, world, view, smoothedFps, clamped, timings);
         const auto presentStart = Clock::now();
         canvas.present(frameBuffer, options.depth, options.blocks, /*homeCursor=*/true);
         const auto writeStart = Clock::now();
