@@ -6,18 +6,10 @@ namespace omma {
 namespace {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GRAVITATIONAL PARAMETERS, m^3/s^2
-//
-// GM, not G times M. GM is what is actually measured — you watch something
-// orbit and read the product off directly, to eleven or twelve digits. G on
-// its own is the least precisely known constant in physics, at roughly 22
-// parts per million, and the masses inherit that error. Multiplying a mass by
-// G to recover GM therefore throws away six digits of accuracy that were
-// already sitting right there.
-//
-// Planetary values are SYSTEM GMs (planet plus its moons) except for Earth,
-// which is listed separately from the Moon because we model the Moon.
-//
+// Gravitational parameters, m^3/s^2. GM, not G times M: GM is measured
+// directly from orbits to eleven or twelve digits, while G alone is known
+// only to ~22 ppm. Planetary values are SYSTEM GMs (planet plus its moons)
+// except Earth, listed separately from the Moon because we model the Moon.
 // Source: JPL DE440 / IAU 2015 nominal values.
 // ─────────────────────────────────────────────────────────────────────────────
 constexpr double kGmSun     = 1.32712440041e20;
@@ -46,21 +38,15 @@ constexpr double kRadiusNeptune = 2.4622e7;
 constexpr double kRadiusPluto   = 1.1883e6;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KEPLERIAN ELEMENTS AND RATES, 1800 AD – 2050 AD
-//
-// Transcribed verbatim from JPL's "Approximate Positions of the Major Planets"
-// so this block can be diffed against the published table:
+// Keplerian elements and rates, 1800 AD – 2050 AD. Transcribed verbatim from
+// JPL's "Approximate Positions of the Major Planets", in the table's own
+// units so the block can be diffed against the published page:
 //     https://ssd.jpl.nasa.gov/planets/approx_pos.html
-//
-// Columns, in the table's own units:
-//     a (au)   e   I (deg)   L (deg)   longitude of periapsis (deg)   node (deg)
-// each followed by its rate per Julian century.
-//
-// NOTE ON "EARTH": the table's row is the EARTH-MOON BARYCENTER, not Earth's
-// centre. We use it for Earth anyway. The barycenter sits about 4,670 km from
-// Earth's centre — inside the planet, and around 1/32000 of an au — so at
-// solar-system scale the error is invisible. It would matter for a precision
-// lunar mission, and this comment is where a future version starts.
+// Columns: a (au), e, I (deg), L (deg), longitude of periapsis (deg),
+// node (deg); each value followed by its rate per Julian century.
+// The "Earth" row is really the EARTH-MOON BARYCENTER (~4,670 km from
+// Earth's centre) — invisible at solar-system scale, matters for a precision
+// lunar mission.
 // ─────────────────────────────────────────────────────────────────────────────
 
 constexpr KeplerianRow kMercury{
@@ -136,29 +122,16 @@ constexpr KeplerianRow kPluto{
   110.30393684, -0.01183482};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE MOON — mean orbit around Earth, with its two big precessions.
+// The Moon — mean orbit around Earth, assembled from the standard mean lunar
+// elements (not from the JPL planetary table), in the same row format.
 //
-// Not from the JPL planetary table; assembled from the standard mean lunar
-// elements. Expressed in the same row format so it flows through the same
-// code path.
-//
-// ACCURACY WARNING, and it is a real one. The Moon's orbit is the classic
-// example of a body a fixed ellipse describes badly. The Sun perturbs it hard
-// enough to produce named effects — evection (±1.27 deg, known to Ptolemy),
-// variation (±0.66 deg, found by Tycho Brahe), the annual equation — none of
-// which a Kepler ellipse can express. Expect errors of a few thousand
-// kilometres in position. That is fine for watching the Moon go round; it is
-// nowhere near good enough to plan a landing.
-//
-// What IS captured, because both are large and secular rather than periodic:
-//   * nodal regression   — the orbital plane rotates backwards once per 18.6 y
-//   * apsidal precession — perigee advances once per 8.85 y
-// The 18.6-year node cycle is why eclipse seasons drift through the calendar.
-//
-// a is chosen consistent with the sidereal month (27.321661 d) given
-// GM_earth + GM_moon, rather than quoting the mean centre-to-centre distance;
-// those two differ by around 1,350 km and mixing them up puts the Moon's
-// period visibly wrong.
+// Accuracy warning: the Sun perturbs the Moon far beyond what a fixed ellipse
+// can express (evection, variation, annual equation) — expect errors of a few
+// thousand km; fine to watch, not to land with. What IS captured, being large
+// and secular: nodal regression (one turn per 18.6 y) and apsidal precession
+// (8.85 y). a is chosen consistent with the sidereal month (27.321661 d)
+// given GM_earth + GM_moon, not the mean centre-to-centre distance; the two
+// differ by ~1,350 km and mixing them up puts the period visibly wrong.
 // ─────────────────────────────────────────────────────────────────────────────
 constexpr double kMoonSemiMajorAxisAu = 3.84748e8 / 149'597'870'700.0;
 
@@ -179,9 +152,8 @@ struct BodySpec {
     BodyId              parent;   ///< ignored when row is nullptr
 };
 
-// Order matters: a parent must appear before its children so that the pointer
-// is already valid when the child is constructed. The Moon after Earth is the
-// only case today, but stating the invariant is cheaper than rediscovering it.
+// Order matters: a parent must appear before its children so the pointer is
+// already valid when the child is constructed (the Moon after Earth, today).
 constexpr std::array<BodySpec, static_cast<std::size_t>(BodyId::Count)> kBodySpecs{{
     {BodyId::Sun,     "Sun",     kGmSun,     kRadiusSun,     nullptr,   BodyId::Sun},
     {BodyId::Mercury, "Mercury", kGmMercury, kRadiusMercury, &kMercury, BodyId::Sun},

@@ -57,13 +57,9 @@ void Camera::zoomBy(double factor) noexcept {
 }
 
 void Camera::frame(double metres) noexcept {
-    // Fit across whichever axis is tighter, so nothing gets cropped.
-    //
-    // Note the elevation term. A tilted view compresses the vertical extent by
-    // sin(elevation), so at 30 degrees the same span needs only half the rows —
-    // meaning framing the system and then tilting would leave the view zoomed
-    // too far out. Accounting for it here keeps "fit the solar system" meaning
-    // the same thing at every tilt.
+    // Fit across the tighter axis. The tilt compresses vertical extent by
+    // sin(elevation), so account for it here — otherwise "fit the solar
+    // system" would mean something different at every tilt.
     const double byHeight = metres * std::max(sinElevation_, 0.2)
                           / static_cast<double>(height_);
     const double byWidth = metres * unitAspect_ / static_cast<double>(width_);
@@ -104,22 +100,18 @@ ScreenPoint Camera::project(const Vec3& world) const noexcept {
 
     const double metresPerColumn = metresPerRow_ / unitAspect_;
     const double dx = screenX / metresPerColumn;
-    // Screen rows increase downward; a chart puts +y at the top. This is the
-    // one place a sign has to flip, and forgetting it produces a solar system
-    // that orbits backwards.
+    // Screen rows increase downward; a chart puts +y at the top. The one
+    // place a sign flips — forget it and the solar system orbits backwards.
     const double dy = -screenY / metresPerRow_;
 
     if (!std::isfinite(dx) || !std::isfinite(dy)) {
         return ScreenPoint{0, 0, /*onScreen=*/false, /*valid=*/false};
     }
 
-    // Guard the cast: an out-of-range double-to-int conversion is undefined
-    // behaviour, not a large integer.
-    //
-    // CLAMP, do not discard. The direction has to survive, because a line whose
-    // far endpoint is a million units off-screen still crosses the viewport and
-    // still has to be drawn. Returning a fixed sentinel here is what made
-    // distant orbits render as dashes with stray segments to the corner.
+    // Guard the cast (out-of-range double-to-int is UB) by CLAMPING, not
+    // discarding: the direction must survive so a clipped line through a far
+    // off-screen endpoint still crosses the viewport. A fixed sentinel here
+    // rendered distant orbits as dashes with stray segments to the corner.
     constexpr double kLimit = 1.0e6;
     const double clampedX = std::clamp(dx, -kLimit, kLimit);
     const double clampedY = std::clamp(dy, -kLimit, kLimit);
@@ -136,32 +128,16 @@ double Camera::viewWidthMetres() const noexcept {
 }
 
 double Camera::viewHeightMetres() const noexcept {
-    // The visible world span vertically, undoing the tilt compression, so the
-    // HUD reports what you can actually see rather than a raw row count.
+    // Undo the tilt compression so the HUD reports the visible world span.
     return static_cast<double>(height_) * metresPerRow_ / std::max(sinElevation_, 0.2);
 }
 
 Vec3 Camera::viewDirection() const noexcept {
-    // Unit vector from the scene toward the viewer.
-    //
-    // Derived by completing the rotation rather than guessing. The projection
-    // keeps two of the three rotated axes and discards the third; that
-    // discarded axis IS the view direction. With
-    //
-    //     northward = -x·sin(az) + y·cos(az)
-    //     screenY   =  northward·sin(el) + z·cos(el)
-    //
-    // the component orthogonal to both screenX and screenY is
-    //
-    //     depth = z·sin(el) - northward·cos(el)
-    //           = x·sin(az)·cos(el) - y·cos(az)·cos(el) + z·sin(el)
-    //
-    // so the coefficients of x, y and z are the direction's components. It is
-    // already unit length, being a row of a rotation matrix.
-    //
-    // Sanity checks, both of which are asserted in the tests: at elevation 90
-    // this is (0, 0, 1) — looking straight down from ecliptic north. At
-    // elevation 0 with azimuth 0 it is (0, -1, 0) — edge-on from the -y side.
+    // The rotated axis the projection discards IS the view direction:
+    //     depth = x·sin(az)·cos(el) - y·cos(az)·cos(el) + z·sin(el)
+    // Already unit length, being a row of a rotation matrix. At elevation 90°
+    // this is (0, 0, 1), straight down; at elevation 0, azimuth 0 it is
+    // (0, -1, 0), edge-on from -y. Both are asserted in the tests.
     return Vec3{sinAzimuth_ * cosElevation_,
                 -cosAzimuth_ * cosElevation_,
                 sinElevation_};

@@ -1,27 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// World — the simulation, one tick at a time.
+// World — the simulation, one tick at a time. Owns the celestial bodies
+// (looked up), the spacecraft (integrated), and the clock; everything above is
+// a client. See docs/DESIGN.md §6.
 //
-// Owns the celestial bodies (looked up), the spacecraft (integrated), and the
-// clock. Everything above this is a client: a renderer, a scenario runner, a
-// Monte Carlo sweep.
-//
-// THE TICK IS THE CONTRACT
-//
-//     step()   advance exactly one fixed dt. Deterministic. No wall clock, no
-//              randomness that is not seeded, no I/O.
-//
-// Everything the World does happens inside step(), in a fixed order, and that
-// order is part of the contract because changing it changes the answers:
-//
+// step() advances exactly one fixed dt, deterministically, in a fixed order
+// that is part of the contract because changing it changes the answers:
 //     1. advance the clock
 //     2. refresh the gravity environment (implicitly, per integrator stage)
 //     3. integrate every spacecraft, applying thrust
 //     4. burn propellant, expire finished burns
 //     5. update each craft's central body and orbital elements
 //     6. detect collisions
-//
-// Doing 6 before 3 would let a craft pass through a planet during the step it
-// hit it. Doing 4 before 3 would burn propellant the burn had not yet used.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -38,13 +27,8 @@
 namespace omma {
 
 /// Something worth telling the world about. Recorded during a tick, drained by
-/// whoever cares.
-///
-/// An event queue rather than a callback, for two reasons. Callbacks fire in the
-/// middle of a tick, when the world is halfway between consistent states — and a
-/// listener that mutates the world from inside step() is a class of bug that is
-/// very hard to reason about. And a queue is recordable, which means a replay can
-/// assert that the same things happened.
+/// whoever cares. A queue rather than callbacks: callbacks fire mid-tick between
+/// consistent states, and a queue is recordable, so a replay can assert on it.
 struct SimEvent {
     enum class Kind : std::uint8_t {
         Launched,
@@ -64,16 +48,9 @@ struct SimEvent {
     std::string  detail;
 };
 
-/// Where and how to put something in orbit.
-///
-/// Deliberately expressed as an ORBIT, not as a rocket launch. Modelling ascent
-/// through an atmosphere is a different simulator: it needs drag, a thrust curve,
-/// a steering program and a launch site rotating with the planet. What this
-/// simulator is about starts at orbit insertion, so a launch here means "a
-/// spacecraft appears on this orbit, having spent this much delta-v to get there".
-///
-/// The delta-v is charged honestly against the propellant budget, so a
-/// high-energy orbit really does leave less in the tank.
+/// Where and how to put something in orbit. Models orbit INSERTION, not ascent —
+/// atmospheric ascent is a different simulator. The delta-v spent reaching the
+/// orbit is charged against the propellant budget.
 struct LaunchRequest {
     std::string name{"SAT"};
     BodyId      aroundBody{BodyId::Earth};

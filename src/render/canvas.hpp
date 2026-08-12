@@ -1,33 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Canvas — a hybrid pixel-and-character display for a terminal.
 //
-// THE HALF-BLOCK TRICK
-// A terminal cell is roughly twice as tall as it is wide, which normally makes
-// pixel art impossible. But the upper-half-block glyph U+2580 fills the top of
-// its cell with the foreground colour and leaves the bottom showing the
-// background colour:
-//
-//     ▀   foreground = the top pixel
-//         background = the bottom pixel
-//
-// One cell becomes TWO SQUARE PIXELS. A 200x50 terminal is a 200x100
-// framebuffer, and with 24-bit colour escapes it is a true-colour one. That is
-// enough for shaded spheres, gradients and glow, with no dependency on
-// anything and no loss of the ability to run over ssh or inside CI.
-//
-// TWO LAYERS, BECAUSE TEXT STILL HAS TO BE CRISP
-// Drawing letters out of 2-pixel-tall blocks would need a bitmap font and
-// would look terrible. So a Canvas holds a pixel layer AND a character layer,
-// and a cell with a character in it wins. Pixels for the scene, glyphs for the
-// HUD.
-//
-// ONE BUFFER, THREE PRESENTATIONS
-// The same pixel data is emitted as true colour, as 16-colour ANSI, or as an
-// ASCII density ramp, chosen at present() time. That last one matters more than
-// it sounds: it keeps `--snapshot --no-colour` producing meaningful, diffable
-// text instead of a blank rectangle, which is what makes the renderer testable
-// at all.
-// ─────────────────────────────────────────────────────────────────────────────
+// The upper-half-block glyph U+2580 takes an independent foreground (top
+// pixel) and background (bottom pixel): two square pixels per character cell,
+// so a 200x50 terminal is a 200x100 true-colour framebuffer. A separate
+// character layer keeps HUD text crisp — a cell with a character wins over
+// its pixels. present() emits true colour, 16-colour ANSI, or an ASCII
+// density ramp; the ramp keeps --no-colour snapshots diffable. docs/DESIGN.md §7.
 #pragma once
 
 #include <cstdint>
@@ -37,9 +15,8 @@
 
 namespace omma::render {
 
-/// A 24-bit colour. Deliberately not a Vec3: these are bytes headed for an
-/// escape sequence, and treating them as floats invites rounding drift through
-/// every blend.
+/// A 24-bit colour: bytes headed for an escape sequence, deliberately not a
+/// float Vec3 (rounding drift through every blend).
 struct Rgb {
     std::uint8_t r{0};
     std::uint8_t g{0};
@@ -47,17 +24,14 @@ struct Rgb {
 
     friend constexpr bool operator==(const Rgb&, const Rgb&) noexcept = default;
 
-    /// Perceptual brightness in [0, 1], using the Rec. 601 weights. Green
-    /// dominates because the eye is most sensitive to it — a flat average makes
-    /// blues look far brighter than they are.
+    /// Perceptual brightness in [0, 1], Rec. 601 weights — green dominates.
     [[nodiscard]] constexpr double luminance() const noexcept {
         return (0.299 * static_cast<double>(r)
               + 0.587 * static_cast<double>(g)
               + 0.114 * static_cast<double>(b)) / 255.0;
     }
 
-    /// Scale brightness, saturating rather than wrapping. Used for orbit trails
-    /// (a dimmed body colour) and glow falloff.
+    /// Scale brightness, saturating rather than wrapping.
     [[nodiscard]] constexpr Rgb scaled(double factor) const noexcept {
         const auto clamp = [](double v) -> std::uint8_t {
             if (v <= 0.0) return 0;
@@ -81,14 +55,9 @@ struct Rgb {
 
 inline constexpr Rgb kBlack{0, 0, 0};
 
-/// Named colours for the character layer.
-///
-/// These are now just handles for Rgb values, not ANSI codes. The character
-/// layer went full 24-bit for a concrete reason: HUD text drawn in
-/// Ink::BrightBlack was unreadable on a black scene, and no combination of the
-/// sixteen ANSI colours fixes that — the palette has no legible dim grey, and
-/// what it does have depends on the user's colour scheme. Picking an actual
-/// rgb(140,150,165) is both readable and predictable.
+/// Named colours for the character layer — handles for Rgb values, not ANSI
+/// codes: the sixteen-colour palette has no legible dim grey for HUD text on
+/// a black scene, and what it has depends on the user's theme.
 enum class Ink : std::uint8_t {
     Default = 0,
     Black, Red, Green, Yellow, Blue, Magenta, Cyan, White,
@@ -101,8 +70,7 @@ enum class Ink : std::uint8_t {
 
 /// How much colour the terminal can be trusted with.
 enum class ColourDepth : std::uint8_t {
-    /// No escapes at all. Pixels become an ASCII density ramp. This is the
-    /// mode that keeps snapshots diffable.
+    /// No escapes; pixels become an ASCII density ramp (diffable snapshots).
     Ascii,
     /// The sixteen colours every terminal has had since the 1980s.
     Ansi16,
@@ -110,19 +78,14 @@ enum class ColourDepth : std::uint8_t {
     TrueColour,
 };
 
-/// Whether the terminal can be trusted with a multi-byte glyph.
-///
-/// This is a SEPARATE capability from colour, and conflating them was a bug.
-/// A Windows console honours 24-bit colour escapes perfectly well while still
-/// decoding output as code page 437, in which case the three bytes of U+2580
-/// arrive as three Latin-1 characters and the display is destroyed.
+/// Whether the terminal can be trusted with a multi-byte glyph. A SEPARATE
+/// capability from colour: a Windows console can honour 24-bit escapes while
+/// still decoding output as CP437, which mangles the three bytes of U+2580.
 enum class BlockStyle : std::uint8_t {
-    /// U+2580, two square pixels per cell. Full vertical resolution, needs the
-    /// console to be in UTF-8.
+    /// U+2580, two square pixels per cell. Needs a UTF-8 console.
     HalfBlocks,
-    /// A space with a background colour: one pixel per cell, so the two pixel
-    /// rows are averaged. Half the vertical resolution and works on literally
-    /// any terminal, because a space is a space everywhere.
+    /// A space with a background colour: one pixel per cell (the two pixel
+    /// rows are averaged). Half the vertical resolution; works on any terminal.
     FullCells,
 };
 
@@ -150,9 +113,8 @@ public:
     }
 
     // ── character layer ────────────────────────────────────────────────────
-    // Out-of-bounds writes are silently ignored throughout. Deliberate: a
-    // renderer whose every call must be guarded by the caller is a renderer
-    // full of duplicated guards, and clipping is what a viewport is for.
+    // Out-of-bounds writes are silently ignored throughout: clipping is the
+    // renderer's job, not the caller's.
 
     void put(int cx, int cy, char glyph, Rgb fg) noexcept;
     void text(int cx, int cy, std::string_view s, Rgb fg) noexcept;
@@ -164,54 +126,41 @@ public:
         text(cx, cy, s, inkToRgb(ink));
     }
 
-    /// Blank a rectangle of cells AND the pixels underneath them. Used to
-    /// clear a strip before drawing HUD text over a busy scene.
+    /// Blank a rectangle of cells AND the pixels underneath them.
     void fill(int cx, int cy, int cellsWide, int cellsHigh) noexcept;
 
     [[nodiscard]] char glyphAt(int cx, int cy) const noexcept;
 
-    /// Is there room to draw a label here? True when the cells hold no
-    /// character AND the pixels beneath are dark enough that text would still
-    /// be readable over them.
+    /// Room to draw a label here? True when the cells hold no character AND
+    /// the pixels beneath are dark enough for text to read over.
     [[nodiscard]] bool spanIsClear(int cx, int cy, int length) const noexcept;
 
     // ── pixel layer ────────────────────────────────────────────────────────
 
     void setPixel(int px, int py, Rgb colour) noexcept;
 
-    /// Additive write. Glow, overlapping trails, anything that should
-    /// accumulate rather than replace.
+    /// Additive write: glow and overlapping trails accumulate.
     void addPixel(int px, int py, Rgb colour) noexcept;
 
     [[nodiscard]] Rgb pixelAt(int px, int py) const noexcept;
 
-    /// Bresenham line. Orbits drawn as connected segments instead of scattered
-    /// dots read as curves rather than as dashes, and they stay continuous when
-    /// zoomed out far enough that adjacent samples are many pixels apart.
+    /// Bresenham line, clipped to the canvas (Cohen–Sutherland): clipping is
+    /// the renderer's job, so callers never pre-cull.
     void line(int x0, int y0, int x1, int y1, Rgb colour) noexcept;
 
-    /// Filled circle, midpoint algorithm. Radius 0 still lights one pixel, so
-    /// a body never disappears entirely just because it is small on screen.
+    /// Filled circle, plain dx²+dy² ≤ r². Radius 0 still lights one pixel, so
+    /// a body never disappears just because it is small on screen.
     void disc(int cx, int cy, int radius, Rgb colour) noexcept;
 
-    /// A disc shaded as a lit sphere, with a day/night terminator.
-    ///
-    /// Once a body is more than a couple of pixels across, a flat-filled circle
-    /// stops reading as a world and starts reading as a sticker. Recovering the
-    /// sphere costs one square root per pixel: for a unit sphere the surface
-    /// normal at offset (dx, dy) from the centre has
-    ///
-    ///     nz = sqrt(1 - (dx^2 + dy^2) / r^2)
-    ///
-    /// and Lambert's cosine law is then just the dot product of that normal with
-    /// the light direction. The terminator falls out for free — it is where the
-    /// dot product crosses zero — so the night side appears without being drawn.
+    /// A disc shaded as a lit sphere: Lambert's law against the analytic
+    /// normal, nz = sqrt(1 - (dx^2 + dy^2) / r^2); the day/night terminator is
+    /// where the dot product crosses zero. Brightness is quantised to 24
+    /// levels to bound escape-sequence bandwidth.
     ///
     /// \param light    direction TOWARD the light, in screen space (x right,
     ///                 y down, z toward the viewer). Need not be normalised.
-    /// \param ambient  floor brightness on the night side, 0..1. Not physical;
-    ///                 a pure-black night side makes a planet look like a bite
-    ///                 taken out of the starfield.
+    /// \param ambient  floor brightness on the night side, 0..1; pure black
+    ///                 reads as a bite out of the starfield.
     void shadedDisc(int cx, int cy, int radius, Rgb colour,
                     double lightX, double lightY, double lightZ,
                     double ambient = 0.10) noexcept;
@@ -225,9 +174,8 @@ public:
     ///
     /// \param depth       how much colour to emit.
     /// \param blocks      whether to use the half-block glyph. See BlockStyle.
-    /// \param homeCursor  emit cursor-home and per-line erase. On for the live
-    ///                    loop, off for a one-shot snapshot that should be
-    ///                    plain text.
+    /// \param homeCursor  emit cursor-home and per-line erase: on for the live
+    ///                    loop, off for a plain-text snapshot.
     void present(std::string& out, ColourDepth depth,
                  BlockStyle blocks = BlockStyle::HalfBlocks,
                  bool homeCursor = true) const;

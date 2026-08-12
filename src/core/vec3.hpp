@@ -1,18 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Vec3 — a three-component vector of doubles.
-//
-// WHY DOUBLE AND NOT FLOAT
-// Neptune's orbit is ~4.5e12 metres. A float carries ~7 significant decimal
-// digits, so at that magnitude its resolution is about 500 km — you could not
-// represent Earth inside Neptune's orbit, let alone a satellite above it. A
-// double carries ~16 digits, giving sub-millimetre resolution out to Neptune.
-// Rendering can drop to float at the very last step; physics never does.
-//
-// WHY A PLAIN STRUCT
-// No virtuals, no invariants to protect, trivially copyable, aggregate
-// initialisable. This type wants to be a bag of three numbers the compiler can
-// keep in registers, and any encapsulation we add here we pay for a billion
-// times over in the integrator.
+// Vec3 — a three-component vector of doubles. Double, not float: at Neptune's
+// ~4.5e12 m a float resolves ~500 km, a double sub-millimetre. Rendering may
+// drop to float at the very last step; physics never does. A plain struct on
+// purpose — trivially copyable, no virtuals — anything fancier is paid for a
+// billion times over in the integrator.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -41,19 +32,17 @@ struct Vec3 {
 
     [[nodiscard]] double norm() const noexcept { return std::sqrt(normSquared()); }
 
-    /// Unit vector in the same direction. Returns zero for a zero-length input
-    /// rather than producing NaN: in this simulation a zero vector means "no
-    /// direction", and silently poisoning the state with NaN turns one bad
-    /// frame into a permanently broken run that is very hard to trace back.
+    /// Unit vector in the same direction. Returns ZERO for a zero-length input,
+    /// not NaN: a zero vector means "no direction", and NaN silently poisons
+    /// the whole run.
     [[nodiscard]] Vec3 normalized() const noexcept {
         const double n = norm();
         return n > 0.0 ? Vec3{x / n, y / n, z / n} : Vec3::zero();
     }
 
     [[nodiscard]] constexpr bool isFinite() const noexcept {
-        // Deliberately not std::isfinite in a constexpr context; the NaN-is-not-
-        // equal-to-itself trick works at compile time and catches infinities via
-        // the subtraction.
+        // Not std::isfinite, which is not constexpr here: NaN != itself, and
+        // the subtraction catches infinities.
         return (x == x) && (y == y) && (z == z)
             && (x - x == 0.0) && (y - y == 0.0) && (z - z == 0.0);
     }
@@ -86,13 +75,9 @@ struct Vec3 {
     return (a - b).norm();
 }
 
-/// Angle between two vectors, in radians, in [0, pi].
-///
-/// Uses atan2(|a x b|, a.b) rather than the textbook acos(a.b / (|a||b|)).
-/// The acos form loses catastrophic precision for nearly-parallel vectors,
-/// where the argument approaches 1 and acos' derivative approaches infinity —
-/// exactly the case that comes up when comparing an orbit against itself one
-/// step later.
+/// Angle between two vectors, in radians, in [0, pi]. Uses atan2(|a x b|, a.b)
+/// rather than the textbook acos form, which loses catastrophic precision for
+/// nearly-parallel vectors — exactly the orbit-vs-itself-one-step-later case.
 [[nodiscard]] inline double angleBetween(const Vec3& a, const Vec3& b) noexcept {
     return std::atan2(cross(a, b).norm(), dot(a, b));
 }

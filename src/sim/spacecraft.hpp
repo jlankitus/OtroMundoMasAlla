@@ -1,24 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Spacecraft — a thing we integrate, as opposed to a thing we look up.
 //
-// WHY THIS IS A STRUCT OF PLAIN DATA AND NOT A CLASS HIERARCHY
-// The obvious design is a Satellite base class with virtual update(), and
-// subclasses for comms relays, imagers, interceptors. It does not survive the
-// requirements: this needs to reach thousands of craft, and a vector of
-// unique_ptr<Satellite> with a virtual call per craft per RK4 stage is the exact
-// shape that makes "OOP is slow" true.
-//
-// Behaviour differences will arrive as COMPONENTS and as a state machine on
-// `mode`, not as subclasses. That keeps the state itself a flat, trivially
-// copyable block that can be moved into a structure-of-arrays layout later
-// without touching any of the logic that reads it.
-//
-// PROPULSION IS MODELLED, NOT FAKED
-// Thrust burns propellant, propellant is mass, and mass divides into force. A
-// spacecraft therefore gets *lighter* and accelerates *harder* as a burn
-// proceeds. Ignoring that is the difference between "delta-v" being a real budget
-// and being a cheat code, and the budget is what makes every later decision
-// interesting.
+// A flat POD struct, not a class hierarchy: behaviour arrives as components and
+// a state machine on `mode`, keeping the state trivially copyable and ready for
+// a structure-of-arrays layout. Propulsion is modelled, not faked: thrust burns
+// propellant, propellant is mass, so a craft gets lighter and accelerates
+// harder as a burn proceeds. See docs/DESIGN.md §5–6.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -31,12 +18,9 @@
 
 namespace omma {
 
-/// Stable handle for a spacecraft.
-///
-/// An index would dangle the moment the container reorders — and it will reorder,
-/// because a spatial sort is how conjunction detection will stay affordable at
-/// ten thousand objects. A generation counter makes a stale handle detectable
-/// rather than silently pointing at whoever moved into the slot.
+/// Stable handle for a spacecraft. A bare index would dangle when the container
+/// reorders; the generation counter makes a stale handle detectable rather than
+/// silently pointing at whoever moved into the slot.
 struct SpacecraftId {
     std::uint32_t index{0};
     std::uint32_t generation{0};
@@ -51,17 +35,13 @@ struct SpacecraftId {
     }
 };
 
-/// How a spacecraft's state is being advanced.
-///
-/// The State pattern, and the reason unbounded time warp is possible at all: a
-/// coasting craft can be frozen onto its own Kepler ellipse, at which point its
-/// position is a function call and warp costs nothing. Under thrust it must be
-/// integrated, and warp is limited to what the integrator can chew through.
+/// How a spacecraft's state is being advanced. A coasting craft can be frozen
+/// onto its own Kepler ellipse (OnRails), making warp free; under thrust it
+/// must be integrated.
 enum class PropagationMode : std::uint8_t {
     /// Numerically integrated against the full gravity field.
     Integrated,
-    /// Frozen onto an analytic two-body ellipse. Not implemented yet; the mode
-    /// exists so the transition has somewhere to go.
+    /// Frozen onto an analytic two-body ellipse. Not implemented yet.
     OnRails,
     /// Hit something, or ran into a planet. Kept for the wreckage.
     Destroyed,
@@ -69,9 +49,8 @@ enum class PropagationMode : std::uint8_t {
 
 /// What a spacecraft is currently trying to do with its engine.
 struct ThrustCommand {
-    /// Direction, in the body's local orbital frame rather than the world frame,
-    /// because "burn prograde" is what a mission plan actually says. Resolved
-    /// against the current state each step.
+    /// Direction, in the craft's local orbital frame — "burn prograde" is what a
+    /// mission plan says. Resolved against the current state each step.
     enum class Frame : std::uint8_t {
         /// Along the velocity vector. Raises the far side of the orbit.
         Prograde,
@@ -95,9 +74,7 @@ struct ThrustCommand {
     /// Only used when frame == World. Need not be normalised.
     Vec3   worldDirection{};
 
-    /// Simulated instant at which the burn should stop. A burn is specified as a
-    /// duration rather than a delta-v because that is what a thruster actually
-    /// has: a valve and a clock. The delta-v is the *outcome*.
+    /// Simulated instant at which the burn should stop.
     Epoch  cutoff{};
     bool   active{false};
 };
@@ -119,14 +96,12 @@ struct Spacecraft {
     double propellantKg{50.0};
     /// Maximum thrust, newtons.
     double maxThrustNewtons{22.0};
-    /// Effective exhaust velocity, m/s. Ties thrust to propellant flow through
-    /// the rocket equation: mdot = F / ve. A monopropellant hydrazine thruster is
-    /// around 2200 m/s; an ion engine ten times that and a thousandth the thrust.
+    /// Effective exhaust velocity, m/s; ties thrust to propellant flow through
+    /// mdot = F / ve. Hydrazine ~2200; an ion engine around ten times that.
     double exhaustVelocity{2200.0};
 
-    /// Which body this craft's orbital elements are measured against. Set from
-    /// the dominant gravity source each step, so it follows the craft across a
-    /// sphere-of-influence boundary.
+    /// Body the craft's elements are measured against; set from the dominant
+    /// gravity source each step, so it follows sphere-of-influence crossings.
     std::size_t centralBodyIndex{0};
 
     // ── bookkeeping ─────────────────────────────────────────────────────────
@@ -143,9 +118,6 @@ struct Spacecraft {
     }
 
     /// Remaining delta-v from the rocket equation, dv = ve * ln(m0 / m1).
-    ///
-    /// Tsiolkovsky. The logarithm is why staging exists: to double your delta-v
-    /// you do not double your propellant, you square the mass ratio.
     [[nodiscard]] double remainingDeltaVMps() const noexcept;
 
     [[nodiscard]] bool isAlive() const noexcept {
@@ -155,10 +127,8 @@ struct Spacecraft {
 };
 
 /// Resolve a thrust command into a world-frame unit vector for the given state.
-///
-/// \param state    the craft's state RELATIVE to its central body. Prograde is
-///                 meaningless in absolute heliocentric terms when what you mean
-///                 is "along my orbit around Earth".
+/// \param state  the craft's state RELATIVE to its central body — prograde means
+///               "along my orbit around Earth", not the heliocentric velocity.
 [[nodiscard]] Vec3 thrustDirection(const ThrustCommand& command,
                                   const StateVector& state) noexcept;
 

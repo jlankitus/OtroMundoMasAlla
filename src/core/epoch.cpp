@@ -10,14 +10,8 @@
 namespace omma {
 namespace {
 
-/// Days from 1970-01-01 to the given proleptic-Gregorian date.
-///
-/// Howard Hinnant's days_from_civil, the algorithm behind std::chrono's civil
-/// calendar support. Branch-free, exact for the full int64 range, and correct
-/// for negative years — which matters less here than the fact that it is a
-/// published algorithm with a published proof, rather than one we invented at
-/// 2am. Reach for known-correct numerical code before writing your own.
-///
+/// Days from 1970-01-01 to the given proleptic-Gregorian date. Howard
+/// Hinnant's days_from_civil: published, proven, exact for the full range.
 /// See: https://howardhinnant.github.io/date_algorithms.html
 constexpr std::int64_t daysFromCivil(std::int64_t y, unsigned m, unsigned d) noexcept {
     y -= (m <= 2) ? 1 : 0;
@@ -57,9 +51,8 @@ constexpr std::int64_t kSecondsPerDayI = 86'400;
 }  // namespace
 
 Duration fromSeconds(double seconds) noexcept {
-    // llround rather than a cast: a cast truncates toward zero, so 0.9999999 ns
-    // of accumulated conversion error would silently become 0 and a scenario
-    // authored as "1.0 s" could land a nanosecond short.
+    // llround rather than a cast: truncation toward zero would let a scenario
+    // authored as "1.0 s" land a nanosecond short.
     return Duration{static_cast<std::int64_t>(std::llround(seconds * 1e9))};
 }
 
@@ -72,8 +65,7 @@ Epoch Epoch::fromCivil(const CivilTime& civil) {
                             - kUnixDaysToJ2000Date;
 
     // Whole seconds in integers; only the fractional second goes through a
-    // double, so the conversion error is bounded by one nanosecond regardless
-    // of how far the date is from J2000.
+    // double, so conversion error is bounded by 1 ns regardless of date.
     const auto wholeSeconds = static_cast<std::int64_t>(civil.second);
     const double fractional = civil.second - static_cast<double>(wholeSeconds);
 

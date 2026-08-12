@@ -24,14 +24,12 @@ StepPacer::StepPacer(Duration fixedStep, std::int64_t maxStepsPerFrame) noexcept
 std::int64_t StepPacer::stepsForFrame(double realSecondsElapsed, double warp) noexcept {
     clamped_ = false;
 
-    // Reject garbage at the door. A single NaN reaching the accumulator makes
-    // every subsequent frame return zero steps, and the simulation appears to
-    // freeze with no error anywhere — a genuinely horrible bug to find.
+    // Reject garbage at the door: one NaN in the accumulator makes every later
+    // frame return zero steps — the sim freezes with no error anywhere.
     if (!std::isfinite(realSecondsElapsed) || !std::isfinite(warp)) {
         return 0;
     }
-    // A negative frame time means the wall clock went backwards (NTP
-    // correction, VM suspend). Not our problem to model; just ignore the frame.
+    // Negative frame time: the wall clock went backwards (NTP, VM suspend).
     if (realSecondsElapsed <= 0.0 || warp <= 0.0) {
         return 0;
     }
@@ -41,8 +39,7 @@ std::int64_t StepPacer::stepsForFrame(double realSecondsElapsed, double warp) no
     const double wholeSteps = std::floor(accumulator_ / fixedStepSeconds_);
 
     // Guard the cast: at extreme warp the quotient can exceed int64 range, and
-    // a double-to-int64 conversion that overflows is undefined behaviour, not
-    // a large number.
+    // an overflowing double-to-int64 conversion is undefined behaviour.
     const auto cap = static_cast<double>(maxStepsPerFrame_);
     if (wholeSteps >= cap) {
         clamped_ = true;

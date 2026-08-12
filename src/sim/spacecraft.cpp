@@ -26,9 +26,8 @@ Vec3 thrustDirection(const ThrustCommand& command, const StateVector& state) noe
             return -state.velocity.normalized();
 
         case Frame::Normal:
-            // Along the specific angular momentum, r x v. This is the axis the
-            // orbit rotates about, so pushing along it tilts the orbital plane
-            // without changing its size -- the only way to change inclination.
+            // Along the specific angular momentum, r x v: tilts the orbital
+            // plane without changing its size.
             return cross(state.position, state.velocity).normalized();
         case Frame::AntiNormal:
             return -cross(state.position, state.velocity).normalized();

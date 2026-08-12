@@ -1,47 +1,21 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Camera — the world-to-screen projection, and nothing else.
 //
-// AN ISOMETRIC VIEW IS A CAMERA CHANGE, NOT A RENDERER CHANGE
-// The top-down view is an orthographic projection that drops the z coordinate.
-// Isometric is the same orthographic projection with a rotation applied first:
-//
-//     world  ──▶  yaw about z  ──▶  tilt about screen-x  ──▶  drop z
-//
-// Which reduces to two lines:
-//
+// Orthographic, with a rotation applied first (yaw about z, tilt about
+// screen-x, drop z):
 //     screenX = x·cos(az) + y·sin(az)
 //     screenY = (−x·sin(az) + y·cos(az))·sin(el) + z·cos(el)
-//
-// At elevation 90° that collapses to (x, y) — the old top-down view, exactly.
-// At elevation 0° it collapses to (x, z) — edge-on. Everything between is the
-// tilted board.
-//
-// WHAT ROLLERCOASTER TYCOON ACTUALLY USES
-// Not true isometric. True iso is elevation atan(1/√2) = 35.264°, where all
-// three axes foreshorten equally — mathematically tidy, and it lands on
-// fractional pixels. RCT uses 2:1 DIMETRIC: elevation 30°, tiles twice as wide
-// as tall, every edge landing on whole pixels. sin(30°) = 0.5 exactly, so the
-// vertical axis compresses by precisely one half.
-//
-// AND IT IS NOT DECORATION
-// From directly overhead, a polar orbit projects to a straight line. A
-// sun-synchronous satellite at 98° inclination — the workhorse of earth
-// observation — renders as a vertical stroke through the planet and tells you
-// nothing. Top-down actively fails the moment orbits stop being coplanar.
-// ─────────────────────────────────────────────────────────────────────────────
+// Elevation 90° reproduces the top-down chart. The default is 2:1 dimetric —
+// 30°, the RollerCoaster Tycoon projection — which is what makes inclination
+// visible at all. See docs/DESIGN.md §7.
 #pragma once
 
 #include "core/vec3.hpp"
 
 namespace omma::render {
 
-/// Where a projected point landed.
-///
-/// THREE STATES, NOT TWO. An earlier version returned {0, 0, false} for
-/// anything too far away to represent, which quietly broke line drawing: the
-/// top-left corner is a perfectly valid coordinate, so every distant orbit grew
-/// a spurious segment running to it. Off-screen and unrepresentable are
-/// different things and need different answers.
+/// Where a projected point landed. THREE states, not two: off-screen and
+/// unrepresentable are different answers, and conflating them once gave every
+/// distant orbit a spurious segment to the top-left corner.
 struct ScreenPoint {
     int  x{0};
     int  y{0};
@@ -55,7 +29,7 @@ struct ScreenPoint {
 
 class Camera {
 public:
-    /// Elevation of the classic 2:1 dimetric view, in radians. 30 degrees.
+    /// The classic 2:1 dimetric elevation, radians: 30°, sin = 0.5 exactly.
     static constexpr double kDimetricElevation = 0.523598775598298873;
 
     /// Straight down. Reproduces a pure top-down chart.
@@ -79,22 +53,19 @@ public:
     void setScale(double metresPerRow) noexcept;
     [[nodiscard]] double metresPerRow() const noexcept { return metresPerRow_; }
 
-    /// Multiply the scale. Clamped, so a stuck key cannot drive it to zero —
-    /// dividing by which yields infinities that then silently fail every
-    /// bounds check, and the display simply goes blank with no error.
+    /// Multiply the scale. Clamped: a stuck key must not drive it to zero
+    /// (infinities silently blank the display).
     void zoomBy(double factor) noexcept;
 
     /// Set the scale so \p metres fits across the tighter axis.
     void frame(double metres) noexcept;
 
     /// Elevation above the reference plane, radians. Clamped to (0, pi/2]:
-    /// exactly zero is edge-on, where the entire solar system collapses to a
-    /// line and nothing is legible.
+    /// exactly edge-on collapses the whole system to a line.
     void setElevation(double radians) noexcept;
     [[nodiscard]] double elevation() const noexcept { return elevation_; }
 
-    /// Rotation about the vertical axis, radians. Wrapped, so spinning the view
-    /// forever is fine.
+    /// Rotation about the vertical axis, radians. Wrapped.
     void setAzimuth(double radians) noexcept;
     [[nodiscard]] double azimuth() const noexcept { return azimuth_; }
 
@@ -111,12 +82,9 @@ public:
     /// projection throws away.
     [[nodiscard]] Vec3 viewDirection() const noexcept;
 
-    /// How far toward the viewer a world point sits, in metres, relative to the
-    /// view centre. Larger is nearer.
-    ///
-    /// This is the depth buffer, in scalar form. It is what lets an orbit pass
-    /// convincingly *behind* a planet instead of always over the top of it, and
-    /// what a painter's-algorithm sort would order by.
+    /// How far toward the viewer a world point sits, in metres, relative to
+    /// the view centre; larger is nearer. The scalar depth buffer a
+    /// painter's-algorithm sort orders by.
     [[nodiscard]] double depthOf(const Vec3& world) const noexcept;
 
 private:
@@ -128,10 +96,8 @@ private:
     double elevation_{kDimetricElevation};
     double azimuth_{0.0};
 
-    // cos/sin of both angles, refreshed whenever either changes. They are used
-    // several times per projected point and there are tens of thousands of
-    // those per frame; recomputing the trig each time is the one avoidable cost
-    // in this class.
+    // cos/sin of both angles, refreshed whenever either changes: used several
+    // times per projected point, tens of thousands of points per frame.
     double cosElevation_{1.0};
     double sinElevation_{0.0};
     double cosAzimuth_{1.0};

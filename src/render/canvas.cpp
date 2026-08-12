@@ -7,12 +7,9 @@
 namespace omma::render {
 namespace {
 
-/// Rgb for each Ink. Index matches the enum.
-///
-/// Chosen for legibility on a near-black scene rather than to imitate a terminal
-/// palette. In particular BrightBlack is a readable slate grey, not the
-/// almost-invisible rgb(118,118,118) most schemes use -- HUD text in that colour
-/// on a black starfield is the specific thing that made the display hard to read.
+/// Rgb for each Ink. Index matches the enum. Chosen for legibility on a
+/// near-black scene, not to imitate a terminal palette — in particular
+/// BrightBlack is a readable slate grey.
 constexpr Rgb kInkColours[] = {
     /* Default       */ {204, 208, 214},
     /* Black         */ { 12,  14,  18},
@@ -34,9 +31,8 @@ constexpr Rgb kInkColours[] = {
 };
 static_assert(std::size(kInkColours) == 17, "one colour per Ink value");
 
-/// Density ramp for the no-colour presentation, darkest first. Chosen for even
-/// perceived steps in a typical monospace font rather than for ASCII order —
-/// ':' really does read lighter than '-' at terminal sizes.
+/// Density ramp for the no-colour presentation, darkest first. Ordered by
+/// perceived brightness at terminal sizes, not by ASCII order.
 constexpr std::string_view kDensityRamp = " .:-=+*#%@";
 
 /// A label needs the pixels under it to be dark enough to read over.
@@ -51,12 +47,8 @@ void appendUnsigned(std::string& out, unsigned value) {
     out.append(buffer, static_cast<std::size_t>(length));
 }
 
-/// "\033[38;2;R;G;Bm" or the background equivalent, built by hand.
-///
-/// snprintf would be clearer and is about eight times slower. This runs up to
-/// twice per cell, twenty thousand times a frame, thirty times a second —
-/// which is exactly the situation where hand-rolling the formatting is
-/// justified, and the only kind of situation where it is.
+/// "\033[38;2;R;G;Bm" or the background equivalent, built by hand: snprintf
+/// is ~8x slower and this runs up to twice per cell, every cell, every frame.
 void appendTrueColour(std::string& out, Rgb colour, bool background) {
     out += background ? "\033[48;2;" : "\033[38;2;";
     appendUnsigned(out, colour.r);
@@ -67,12 +59,9 @@ void appendTrueColour(std::string& out, Rgb colour, bool background) {
     out += 'm';
 }
 
-/// Nearest of the sixteen ANSI colours, for terminals without 24-bit support.
-///
-/// Quantises each channel to a 0/1 bit plus a brightness bit. Crude, and
-/// entirely adequate: the alternative is a nearest-neighbour search through a
-/// palette table for every pixel of every frame, to choose between sixteen
-/// colours that are themselves whatever the user's theme says they are.
+/// Nearest of the sixteen ANSI colours, for terminals without 24-bit support:
+/// each channel quantised to one bit, plus a brightness bit. Crude, and
+/// adequate for a sixteen-colour target the user's theme redefines anyway.
 int nearestAnsi16(Rgb colour) {
     const int threshold = 96;
     const int bright = 168;
@@ -214,26 +203,16 @@ constexpr int kAbove  = 8;
     return code;
 }
 
-/// Trim a segment to the viewport, in place. Returns false if it misses
-/// entirely.
-///
-/// WHY CLIPPING AND NOT AN ITERATION BUDGET
-/// The first version just capped how many Bresenham steps a segment could take,
-/// which bounded the cost but produced the wrong picture: a chord whose two
-/// endpoints are both off-screen was skipped even though it crosses the middle
-/// of the view. Every orbit larger than the viewport rendered as dashes.
-///
-/// Clipping fixes correctness and performance at once. Cohen-Sutherland trims
-/// against each edge in turn using the region codes, so afterwards the segment
-/// is guaranteed to lie inside and Bresenham can run unbounded.
+/// Trim a segment to the viewport in place, Cohen-Sutherland region codes;
+/// returns false if it misses entirely. Clipping is the renderer's job —
+/// callers never pre-cull — and afterwards Bresenham can run unbounded.
 [[nodiscard]] bool clipToViewport(double& x0, double& y0, double& x1, double& y1,
                                  double maxX, double maxY) noexcept {
     int code0 = regionCode(x0, y0, maxX, maxY);
     int code1 = regionCode(x1, y1, maxX, maxY);
 
-    // Bounded because each iteration eliminates at least one region bit, and
-    // there are only four. The cap is belt and braces against a pathological
-    // input producing a NaN comparison that never converges.
+    // Each iteration clears at least one of the four region bits; the cap is
+    // belt and braces against a NaN comparison that never converges.
     for (int guard = 0; guard < 8; ++guard) {
         if ((code0 | code1) == kInside) {
             return true;                       // wholly inside
@@ -296,10 +275,8 @@ void Canvas::line(int x0, int y0, int x1, int y1, Rgb colour) noexcept {
     const int bx = static_cast<int>(std::lround(cx1));
     const int by = static_cast<int>(std::lround(cy1));
 
-    // Bresenham, integer only, all-octants form: no special cases for steep
-    // versus shallow, and no floating point, so there is no possibility of a
-    // rounding difference between platforms showing up as a different picture.
-    // That matters because snapshots are compared byte for byte.
+    // Integer-only, all-octants Bresenham: no floating point, so no platform
+    // rounding difference — snapshots are compared byte for byte.
     const int dx = std::abs(bx - ax);
     const int dy = -std::abs(by - ay);
     const int sx = ax < bx ? 1 : -1;
@@ -328,15 +305,8 @@ void Canvas::disc(int cx, int cy, int radius, Rgb colour) noexcept {
         setPixel(cx, cy, colour);
         return;
     }
-    // Plain dx^2 + dy^2 <= r^2.
-    //
-    // An earlier version used <= r^2 + r, meaning to round the boundary
-    // outward so small discs read as round rather than as diamonds. At radius 1
-    // that admits (+-1, +-1), because 1 + 1 <= 1 + 1 -- so every body in the
-    // scene rendered as a solid 3x3 SQUARE. The fudge was worse than the
-    // problem it solved: at radius 1 the honest circle is a five-pixel plus,
-    // which reads as a point, and from radius 2 up the standard test is round
-    // already.
+    // Plain dx^2 + dy^2 <= r^2. An outward "+ r" fudge admits (+-1, +-1) at
+    // radius 1 and renders every small body as a solid 3x3 square.
     const int rSquared = radius * radius;
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
@@ -351,8 +321,7 @@ void Canvas::shadedDisc(int cx, int cy, int radius, Rgb colour,
                         double lightX, double lightY, double lightZ,
                         double ambient) noexcept {
     if (radius <= 1) {
-        // Too small to shade meaningfully; shading a two-pixel planet just makes
-        // it dimmer and harder to see.
+        // Too small to shade meaningfully; it would only get dimmer.
         disc(cx, cy, radius, colour);
         return;
     }
@@ -383,18 +352,9 @@ void Canvas::shadedDisc(int cx, int cy, int radius, Rgb colour,
             const double lambert = nx * lx + ny * ly + nz * lz;
             double brightness = ambient + (1.0 - ambient) * std::max(0.0, lambert);
 
-            // QUANTISED, and the reason is bandwidth rather than aesthetics.
-            //
-            // A continuous gradient gives every pixel of a planet its own colour,
-            // which defeats the colour-run compression in present() completely:
-            // adding shading took a frame from 15 KB to 48 KB, because each pixel
-            // now needs its own escape sequence.
-            //
-            // Snapping to 24 levels means neighbouring pixels usually share a
-            // colour, so the runs come back. Twenty-four steps across a
-            // terminator that is a few dozen pixels wide is below the point where
-            // banding is visible, so this costs nothing anyone can see and gets
-            // most of the bytes back.
+            // Quantised to 24 levels for bandwidth, not aesthetics: a
+            // continuous gradient defeats present()'s colour-run compression
+            // (48 KB/frame vs 15), and 24 steps show no visible banding.
             constexpr double kLevels = 24.0;
             brightness = std::floor(brightness * kLevels) / kLevels;
 
@@ -414,9 +374,7 @@ void Canvas::glow(int cx, int cy, int radius, Rgb colour) noexcept {
             if (d > r) {
                 continue;
             }
-            // Inverse-square-ish falloff, which is both physically suggestive
-            // and the shape that actually looks like light rather than like a
-            // flat coloured circle.
+            // Inverse-square-ish falloff: reads as light, not a flat circle.
             const double t = 1.0 - d / r;
             addPixel(cx + dx, cy + dy, colour.scaled(t * t));
         }
@@ -433,23 +391,10 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
     }
 
     // Track what the terminal currently believes, so an escape is emitted only
-    // when something actually changes. On a mostly-black starfield this is the
-    // difference between 200 KB and 15 KB per frame.
-    //
-    // TWO FLAGS, NOT ONE. This was a real bug and a nasty one to see.
-    //
-    // A cell whose two halves match is emitted as a SPACE with a background
-    // colour, which never touches the foreground. The original code still set a
-    // single `haveState` flag afterwards, asserting that both channels were
-    // known. The next half-block whose top pixel happened to match the stale
-    // `currentFg` therefore skipped its foreground escape and rendered in
-    // whatever the last reset left behind -- the terminal's DEFAULT foreground,
-    // a light grey.
-    //
-    // The visible symptom was light grey blocks scattered along every orbit, at
-    // exactly the cells where a full-cell run meets a half block of the same
-    // colour, which is what a near-horizontal line does at every pixel-row
-    // transition. Foreground and background validity are separate facts.
+    // on change — 15 KB/frame instead of 200 KB on a mostly-black starfield.
+    // Foreground and background validity are SEPARATE facts: a space-with-
+    // background cell sets only bgKnown, and one shared flag caused the
+    // stale-foreground grey-block bug (docs/QA.md).
     bool fgKnown = false;
     bool bgKnown = false;
     Rgb currentFg{};
@@ -468,11 +413,9 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
             Rgb bottom = pixels_[pixelIndex(cx, cy * 2 + 1)];
 
             if (blocks == BlockStyle::FullCells) {
-                // Average the two rows and treat the cell as one pixel, so the
-                // top == bottom path below emits a plain space. Brighter of the
-                // two would lose thin features against the background; the
-                // average keeps a single-pixel orbit line visible as a dimmer
-                // cell rather than dropping it entirely.
+                // One pixel per cell: average the two rows so the top == bottom
+                // path emits a plain space. (Brighter-of-two would drop a
+                // single-pixel orbit line entirely.)
                 const Rgb mean{static_cast<std::uint8_t>((top.r + bottom.r) / 2),
                                static_cast<std::uint8_t>((top.g + bottom.g) / 2),
                                static_cast<std::uint8_t>((top.b + bottom.b) / 2)};
@@ -487,9 +430,8 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
                     continue;
                 }
                 if (!inCharacterMode || !(cell.fg == currentInk)) {
-                    // Reset first: leaving pixel mode means clearing whatever
-                    // background colour the half-blocks left behind, otherwise
-                    // HUD text inherits a planet's colour as its backdrop.
+                    // Reset first: leaving pixel mode must clear the half-blocks'
+                    // background, or HUD text inherits a planet's colour.
                     out += "\033[0m";
                     if (depth == ColourDepth::TrueColour) {
                         appendTrueColour(out, cell.fg, /*background=*/false);
@@ -507,8 +449,7 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
             }
 
             if (depth == ColourDepth::Ascii) {
-                // No colour to work with, so brightness becomes density. This
-                // is what keeps --no-colour snapshots meaningful.
+                // Brightness becomes density; keeps --no-colour snapshots meaningful.
                 const double level = std::max(top.luminance(), bottom.luminance());
                 const auto index = static_cast<std::size_t>(
                     level * static_cast<double>(kDensityRamp.size() - 1) + 0.5);
@@ -527,12 +468,9 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
             };
 
             if (top == bottom) {
-                // Both halves the same: paint the whole cell as background and
-                // emit a space. One byte instead of the three that U+2580 costs
-                // in UTF-8 — and most of a space scene is empty.
-                //
-                // Note what this does NOT do: touch the foreground, or claim to
-                // know it. bgKnown only.
+                // Both halves the same: emit a space with a background colour —
+                // one byte, not U+2580's three. Sets bgKnown ONLY; the
+                // foreground is neither emitted nor known.
                 if (!bgKnown || !(currentBg == top)) {
                     emitColour(top, /*background=*/true);
                     currentBg = top;
@@ -556,11 +494,8 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
         }
 
         if (depth != ColourDepth::Ascii) {
-            // Reset before the newline. Without this the last cell's background
-            // colour stretches across the rest of the terminal row.
-            //
-            // A reset clears BOTH channels, so both flags have to drop. Leaving
-            // one set is the bug this whole comment block exists to prevent.
+            // Reset before the newline, or the last background colour stretches
+            // across the row. A reset clears BOTH channels: both flags drop.
             out += "\033[0m";
             fgKnown = false;
             bgKnown = false;

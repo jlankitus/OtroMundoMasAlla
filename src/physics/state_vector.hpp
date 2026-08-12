@@ -2,18 +2,11 @@
 // StateVector — position and velocity, the complete motion state of a point
 // mass. Six numbers.
 //
-// FRAME CONVENTION, stated once and relied on everywhere
-// Unless a function name says otherwise, a StateVector is expressed in the
-// heliocentric ecliptic J2000 frame:
-//
-//   origin  the Solar System's central body (the Sun)
-//   x-axis  toward the vernal equinox of J2000
-//   z-axis  ecliptic north (normal to Earth's orbital plane at J2000)
-//   y-axis  completes a right-handed set
-//
-// This is an *inertial* frame: it does not rotate. Newton's laws only hold in
-// one of those, so integrating in a rotating frame without adding Coriolis and
-// centrifugal terms is a classic and very confusing bug.
+// Frame convention, relied on everywhere: unless a function name says
+// otherwise, a StateVector is in the heliocentric ecliptic J2000 frame —
+// origin the Sun, x toward the J2000 vernal equinox, z ecliptic north, y
+// completing a right-handed set. The frame is inertial; integrating in a
+// rotating frame without Coriolis/centrifugal terms is a classic bug.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 

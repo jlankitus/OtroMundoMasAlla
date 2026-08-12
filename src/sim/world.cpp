@@ -17,14 +17,9 @@ World::World(SolarSystem system, Duration fixedStep, Epoch start)
     : system_{std::move(system)},
       gravity_{makeGravityField(system_)},
       clock_{fixedStep, start} {
-    // NOTE ON STEP SIZE
-    // One second is comfortable for low Earth orbit: the orbital period is about
-    // 5500 s, so a step is ~0.07 degrees of arc and RK4's error is far below a
-    // millimetre per orbit. It is NOT comfortable for a 200 km periapsis on a
-    // highly eccentric orbit, where the craft covers ten times the angle per
-    // second. The integrator does not adapt; that is a deliberate simplification
-    // for determinism, and the price is that the scenario has to choose a step
-    // appropriate to its tightest orbit.
+    // Step size: 1 s is comfortable for LEO, not for a low periapsis on a highly
+    // eccentric orbit. The integrator does not adapt (determinism), so a scenario
+    // must choose a step appropriate to its tightest orbit.
     gravity_.refresh(start);
 }
 
@@ -87,31 +82,16 @@ void World::integrateSpacecraft(Spacecraft& craft, double dt) {
     if (craft.thrust.active && craft.thrust.throttle > kMinimumThrottle
         && craft.hasPropellant()) {
 
-        // HOW LONG IS THE ENGINE ACTUALLY ON DURING THIS STEP?
-        //
-        // Not necessarily the whole step. A burn cutoff falls wherever the rocket
-        // equation put it, which is almost never on a step boundary — and a burn
-        // can be shorter than dt outright.
-        //
-        // The first version ignored this: thrust was applied for the full step and
-        // the cutoff was only checked afterwards. A 0.19 s burn at 200 kN
-        // therefore delivered a full second of thrust — 625 m/s instead of the
-        // 120 m/s requested, a factor of 5.2. It also quietly over-delivered every
-        // normal burn by the length of its final partial step, which showed up as
-        // a 7% error that looked like a physics subtlety and was not.
-        //
-        // Scaling the acceleration by the duty cycle spreads the correct impulse
-        // across the step. That is a zero-order hold: the impulse is right, its
-        // distribution within the step is smeared. At dt = 1 s against burns of
-        // seconds to minutes the timing error is far below the integrator's own.
+        // Duty cycle: honour the burn cutoff within the step. A cutoff almost
+        // never lands on a step boundary, and a 0.19 s burn inside a 1 s step
+        // must deliver 19% of the step's impulse, not 100%. Zero-order hold:
+        // the impulse is right, its distribution within the step is smeared.
         const double remaining = toSeconds(craft.thrust.cutoff - stepStart);
         const double activeSeconds = std::clamp(remaining, 0.0, dt);
         const double dutyCycle = activeSeconds / dt;
-        // Direction is resolved in the craft's LOCAL orbital frame. "Prograde"
-        // means along the orbit around its central body, not along its
-        // heliocentric velocity -- those differ by 30 km/s for anything near
-        // Earth, so getting this wrong sends every burn in roughly the direction
-        // Earth happens to be travelling.
+        // Direction is resolved in the craft's LOCAL orbital frame: "prograde"
+        // means along its orbit around the central body, not its heliocentric
+        // velocity.
         const StateVector local = relativeState(craft);
         const Vec3 direction = thrustDirection(craft.thrust, local);
 
@@ -123,19 +103,9 @@ void World::integrateSpacecraft(Spacecraft& craft, double dt) {
         const double burned = std::min(craft.propellantKg,
                                        (force / craft.exhaustVelocity) * activeSeconds);
 
-        // MASS AT THE MIDPOINT OF THE STEP, not at its start.
-        //
-        // The craft gets lighter as it burns, so a step that uses the starting mass
-        // throughout under-estimates the acceleration. The size of the error is
-        // exactly the rocket equation's logarithm: delivered dv comes out as
-        // dm/m0 instead of ve*ln(m0/m1), which is 2.7% low for a step that
-        // consumes 5% of the craft's mass.
-        //
-        // Evaluating the mass halfway through the propellant consumed this step is
-        // the midpoint rule, and it cuts that to a rounding error for one extra
-        // subtraction. Worth it: a manoeuvre that silently delivers 97% of what
-        // was asked for is exactly the kind of small bias that makes a rendezvous
-        // impossible to close.
+        // Midpoint-rule mass. Holding the start-of-step mass throughout delivers
+        // dv = dm/m0 instead of ve*ln(m0/m1), a systematic under-delivery;
+        // evaluating mass halfway through this step's propellant fixes it.
         const double massMidpoint = craft.totalMassKg() - 0.5 * burned;
         const double acceleration = force / massMidpoint;
 
@@ -163,9 +133,7 @@ StateVector World::relativeState(const Spacecraft& craft) const noexcept {
 
 OrbitalElements World::elementsOf(const Spacecraft& craft) const noexcept {
     const auto& body = *system_.bodies()[craft.centralBodyIndex];
-    // GM of the pair. The craft's own mass is utterly negligible against a planet,
-    // but writing it this way means the same function is correct if this is ever
-    // used for a moon.
+    // GM of the pair; the craft's own mass is negligible against any body here.
     const double gm = body.gravitationalParameter();
     return elementsFromState(relativeState(craft), gm, clock_.now());
 }
@@ -176,15 +144,9 @@ double World::altitudeOf(const Spacecraft& craft) const noexcept {
 }
 
 void World::detectCollisions() {
-    // Against celestial bodies only, for now. Craft-versus-craft needs a spatial
-    // index to stay affordable at thousands of objects, and that arrives with the
-    // constellation work.
-    //
-    // Note this is a POSITION test at the end of a step, not a swept test. A craft
-    // moving 7.7 km/s covers 7.7 km in a one-second step, so it can in principle
-    // pass through a thin shell. It cannot pass through a planet, which is what
-    // this is for -- but the limitation is real and is why the check belongs at
-    // the end of the step rather than the beginning.
+    // Celestial bodies only, for now; craft-versus-craft needs a spatial index.
+    // A position test at end of step, not swept: a fast craft could cross a thin
+    // shell within a step, but not a planet, which is what this is for.
     gravity_.refresh(clock_.now());
 
     for (Spacecraft& craft : spacecraft_) {
@@ -194,13 +156,7 @@ void World::detectCollisions() {
         for (std::size_t i = 0; i < system_.size(); ++i) {
             const auto& body = *system_.bodies()[i];
             // The field was just refreshed at this instant, so read the cached
-            // position rather than calling sample() again.
-            //
-            // The original version did call sample(), which is a Kepler solve, for
-            // every body for every craft on every step: 132 solves per step with
-            // twelve satellites, purely to ask "did anything hit a planet". It was
-            // the dominant cost in the whole tick and it was invisible, because
-            // sample() looks free at the call site.
+            // position rather than re-sampling (a Kepler solve per body per craft).
             const double distanceToCentre =
                 distance(craft.state.position, gravity_.positionOf(i));
             if (distanceToCentre < body.meanRadius()) {
@@ -226,9 +182,8 @@ SpacecraftId World::launch(const LaunchRequest& request) {
         return SpacecraftId::invalid();
     }
 
-    // Altitude is specified at PERIAPSIS, which is the useful convention: it is
-    // the number that determines whether you survive, and "400 km orbit" with
-    // eccentricity always means 400 km at the low point.
+    // Altitude is specified at PERIAPSIS: "400 km orbit" with eccentricity
+    // means 400 km at the low point.
     OrbitalElements elements{};
     elements.semiMajorAxis = periapsisRadius / (1.0 - request.eccentricity);
     elements.eccentricity = request.eccentricity;

@@ -31,12 +31,9 @@ bool stdoutIsTerminal() noexcept {
 #endif
 }
 
-/// Is an environment variable set to anything at all?
-///
-/// MSVC deprecates getenv in favour of _dupenv_s, which allocates. Since this
-/// file is already the designated home for platform differences, the branch
-/// lives here rather than being silenced with _CRT_SECURE_NO_WARNINGS — a
-/// blanket macro that would also switch off the warnings we do want.
+/// Is an environment variable set to anything at all? MSVC deprecates getenv
+/// in favour of _dupenv_s; the branch lives here rather than behind
+/// _CRT_SECURE_NO_WARNINGS, which would also silence warnings we do want.
 bool environmentVariableIsSet(const char* name) noexcept {
 #if defined(_WIN32)
     char* value = nullptr;
@@ -61,8 +58,7 @@ bool tryEnableVirtualTerminal() noexcept {
     if (GetConsoleMode(handle, &mode) == 0) {
         return false;
     }
-    // Already on (Windows Terminal does this for us) is success, not a no-op
-    // we need to detect.
+    // Already on (Windows Terminal does this for us) is success.
     if ((mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) {
         return true;
     }
@@ -74,21 +70,8 @@ bool tryEnableVirtualTerminal() noexcept {
 
 }  // namespace
 
-// TWO CAPABILITIES, NOT ONE. This distinction was a bug worth recording.
-//
-// "Can this terminal process escape sequences?" and "should this program use
-// colour?" are different questions with different answers, and the first version
-// answered both with enableAnsi().
-//
-// The consequence: a user with NO_COLOR=1 in their environment could not run the
-// interactive renderer AT ALL. It reported "needs an interactive terminal" while
-// sitting in an obviously interactive terminal, because the session constructor
-// gave up as soon as colour was declined.
-//
-// https://no-color.org asks programs not to emit COLOUR. Cursor positioning,
-// line erasure and the alternate screen buffer are not colour. Refusing to run
-// is a misreading of the convention -- and the right response is to render in
-// monochrome, which this program already knew how to do.
+// Escapes and colour are separate capabilities; the contract in console.hpp
+// records the NO_COLOR bug that forced the split.
 bool g_vtEnabled = false;
 bool g_vtAsked = false;
 
@@ -130,11 +113,9 @@ bool colourDeclinedByEnvironment() noexcept {
     return environmentVariableIsSet("NO_COLOR");
 }
 
-// The disabled case returns "" rather than a default-constructed string_view.
-// A default-constructed view's data() is nullptr, and passing nullptr to
-// printf's %s is undefined behaviour — it happens to print "(null)" on MSVC
-// and crashes on glibc. Every accessor here is guaranteed to yield a valid
-// NUL-terminated pointer.
+// The disabled case returns "" rather than a default-constructed view, whose
+// data() is nullptr — and nullptr to printf's %s is undefined behaviour
+// (crashes on glibc). Every accessor yields a valid NUL-terminated pointer.
 #define OMMA_ANSI(name, code)                                            \
     std::string_view name() noexcept {                                   \
         return g_ansi ? std::string_view{code} : std::string_view{""};   \
@@ -165,9 +146,8 @@ TerminalSize terminalSize() noexcept {
     CONSOLE_SCREEN_BUFFER_INFO info{};
     const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
     if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info) != 0) {
-        // srWindow is the visible viewport. dwSize is the scrollback buffer,
-        // which on Windows is routinely 9000 rows tall -- using it would size
-        // the canvas to the buffer rather than the window.
+        // srWindow is the visible viewport; dwSize is the scrollback buffer
+        // (routinely 9000 rows tall), which would size the canvas to the buffer.
         const int columns = info.srWindow.Right - info.srWindow.Left + 1;
         const int rows = info.srWindow.Bottom - info.srWindow.Top + 1;
         if (columns > 0 && rows > 0) {
@@ -205,16 +185,8 @@ void useBinaryStdout() noexcept {
 
 bool enableUtf8Output() noexcept {
 #if defined(_WIN32)
-    // THE BUG THIS FIXES
-    // The compiler's /utf-8 flag makes string literals UTF-8 in the binary. It
-    // says nothing about how the console INTERPRETS the bytes we write. A
-    // Windows console defaults to code page 437 or 1252 depending on locale, so
-    // the three bytes of U+2580 arrive as three separate Latin-1 characters and
-    // the entire display becomes "a-graveâ--EUR" repeated ten thousand times.
-    //
-    // This did not show up while the renderer emitted only ASCII. It appeared
-    // the moment half blocks did, which is a good argument for testing the
-    // presentation layer on a real console and not only through a pipe.
+    // The compiler's /utf-8 flag fixes the binary's literals, not the
+    // console's decoding; see the contract in console.hpp.
     if (g_savedOutputCodePage == 0) {
         g_savedOutputCodePage = GetConsoleOutputCP();
     }
@@ -225,8 +197,7 @@ bool enableUtf8Output() noexcept {
     g_utf8 = SetConsoleOutputCP(CP_UTF8) != 0;
     return g_utf8;
 #else
-    // Any POSIX terminal in this century is UTF-8, and if it is not, the locale
-    // says so rather than us guessing.
+    // Any POSIX terminal in this century is UTF-8.
     g_utf8 = true;
     return true;
 #endif
@@ -246,8 +217,7 @@ InteractiveSession::InteractiveSession() noexcept {
                   "(pre-1511 Windows, or a redirected handle)";
         return;
     }
-    // Resolve the colour decision now so callers can query it, but ignore the
-    // answer here.
+    // Resolve the colour decision now so callers can query it; ignored here.
     static_cast<void>(enableAnsi());
 
 #if defined(_WIN32)
@@ -290,9 +260,8 @@ InteractiveSession::~InteractiveSession() noexcept {
     std::fflush(stdout);
 
 #if defined(_WIN32)
-    // Put the code page back. Leaving a shell in UTF-8 when it started in 437
-    // silently breaks other programs the user runs afterwards, which is exactly
-    // the class of rudeness the raw-mode guard exists to avoid.
+    // Put the code page back: leaving a shell in UTF-8 when it started in 437
+    // silently breaks other programs the user runs afterwards.
     if (g_savedOutputCodePage != 0 && g_savedOutputCodePage != CP_UTF8) {
         SetConsoleOutputCP(g_savedOutputCodePage);
     }
@@ -312,18 +281,16 @@ void sleepFor(std::chrono::nanoseconds duration) noexcept {
     }
 
 #if defined(_WIN32)
-    // Created once and reused. Creating a timer per frame would add a kernel
-    // object allocation to every frame, which is exactly the sort of cost you
-    // introduce while fixing a performance problem.
+    // Created once and reused: a timer per frame would add a kernel object
+    // allocation to every frame.
     static const HANDLE timer = [] {
         HANDLE h = CreateWaitableTimerExW(nullptr, nullptr,
                                           CREATE_WAITABLE_TIMER_MANUAL_RESET
                                               | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                           TIMER_ALL_ACCESS);
         if (h == nullptr) {
-            // Pre-1803 Windows rejects the high-resolution flag outright.
-            // A normal timer is no better than Sleep(), so signal "no timer"
-            // and let the portable path handle it.
+            // Pre-1803 Windows rejects the high-resolution flag; a normal
+            // timer is no better than Sleep(), so fall to the portable path.
             h = nullptr;
         }
         return h;
@@ -353,9 +320,8 @@ int pollKey() noexcept {
     }
     const int key = _getch();
     // 0 and 224 prefix an extended key (arrows, function keys). Consume the
-    // second byte and report nothing, rather than letting the payload byte
-    // masquerade as a letter -- the down arrow's second byte is 80, which is
-    // 'P', and a stray 'P' doing something surprising is a maddening bug.
+    // payload byte and report nothing — the down arrow's second byte is 'P',
+    // and a stray 'P' masquerading as a keystroke is a maddening bug.
     if (key == 0 || key == 224) {
         static_cast<void>(_getch());
         return 0;

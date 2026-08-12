@@ -1,13 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // KeplerEphemeris — a body on an analytic ellipse whose elements drift slowly.
 //
-// The elements are stored in the exact format JPL publishes them: astronomical
-// units and degrees, with linear rates per Julian century. That is deliberate.
-// Reference data should live in the source in the units of its reference, so
-// that anyone can diff the table against the published page character by
-// character. Converting to SI on the way in costs nothing and happens once;
-// converting by hand before pasting costs an afternoon of hunting for the one
-// digit that got typed wrong.
+// Elements are stored in the exact format JPL publishes them (au, degrees,
+// rates per Julian century) so the table can be diffed against the published
+// page character by character; conversion to SI happens once, on evaluation.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -18,23 +14,16 @@
 
 namespace omma {
 
-/// One row of JPL's "Approximate Positions of the Major Planets" table.
-///
-/// Each element has a value at J2000 and a linear rate per Julian century.
-/// Units are as published: au, au/Cy, degrees, degrees/Cy.
-///
-/// Note that the table parameterises the orientation with the *longitude* of
-/// periapsis and the *mean longitude*, not the argument of periapsis and mean
-/// anomaly. They are related by
-///
-///     argument of periapsis  omega = varpi - Omega
-///     mean anomaly           M     = L     - varpi
-///
-/// which is where the conversion in elementsAt() comes from.
+/// One row of JPL's "Approximate Positions of the Major Planets" table:
+/// a value at J2000 plus a linear rate per Julian century, in published units
+/// (au, au/Cy, degrees, degrees/Cy). The table parameterises orientation with
+/// the *longitude* of periapsis and the *mean longitude*, related to ours by
+///     omega = varpi - Omega,   M = L - varpi
+/// — the conversion in elementsAt().
 ///
 /// Source: https://ssd.jpl.nasa.gov/planets/approx_pos.html
-/// Accuracy: a few arcminutes over 1800–2050. Good enough to fly through, and
-/// swappable for real DE440 kernels later behind the same IEphemeris.
+/// Accuracy: a few arcminutes over 1800–2050; swappable for real DE440
+/// kernels behind the same IEphemeris.
 struct KeplerianRow {
     double semiMajorAxisAu{0.0};              double semiMajorAxisAuPerCy{0.0};
     double eccentricity{0.0};                 double eccentricityPerCy{0.0};

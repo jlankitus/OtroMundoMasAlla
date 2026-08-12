@@ -1,31 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // GravityField — what the environment does to a vehicle.
 //
-// PUT POLYMORPHISM WHERE N IS SMALL, DATA LAYOUT WHERE N IS LARGE
-//
-// The naive design calls IEphemeris::sample(t) inside the per-spacecraft
-// acceleration loop. With eleven bodies, four RK4 stages and ten thousand
-// spacecraft that is 440,000 virtual calls per step, each one re-solving
-// Kepler's equation for a planet whose position has not changed.
-//
-// Instead the field is refreshed ONCE per integrator stage: eleven virtual
-// calls that flatten every source into a contiguous array of
-// {position, GM} PODs. The spacecraft loop then runs over that array with no
-// virtual dispatch, no branching and no pointer chasing.
-//
-//     refresh(t)        11 virtual calls, once per stage
-//     accelerationAt()  tight loop over contiguous PODs, once per spacecraft
-//
-// Notice the interface sits at the eleven-planets boundary, not the
-// ten-thousand-satellites boundary. Most "OOP is slow" pain comes from getting
-// that the wrong way round.
-//
-// TWO-PHASE API, AND WHY THAT IS SAFE HERE
-// refresh-then-query is a shape that invites bugs: forget the refresh and you
-// silently integrate against last stage's planets. It survives because the only
-// code that touches it is integrate(), which owns both halves and is itself
-// tested. Callers of the integrator never see the two phases. When an API is
-// easy to misuse, confine the use to one place and test that place hard.
+// Polymorphism where N is small, data layout where N is large: refresh(t)
+// makes eleven virtual calls once per integrator stage, flattening every
+// source into a contiguous array of {position, GM} PODs; accelerationAt()
+// then runs a tight per-spacecraft loop with no virtual dispatch. The
+// two-phase refresh-then-query API is confined to integrate(), which owns
+// both halves and is tested. See docs/DESIGN.md §5.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -39,9 +20,8 @@
 
 namespace omma {
 
-/// One gravity source, frozen at an instant. Deliberately a flat POD: this is
-/// the type the inner loop reads, so it wants to be small, trivially copyable
-/// and free of anything the compiler cannot see through.
+/// One gravity source, frozen at an instant. Deliberately a flat POD: the
+/// inner loop reads it, so it stays small, trivially copyable, transparent.
 struct GravitySource {
     Vec3   position;
     double gm{0.0};
@@ -62,27 +42,21 @@ public:
 
     /// Newtonian acceleration at \p position, from the cached sources.
     ///
-    /// Softening: a point mass has infinite acceleration at zero distance, and
-    /// a spacecraft that passes exactly through a body's centre would produce
-    /// inf, then NaN, then a permanently dead run. Distances below the body's
-    /// own radius are not physical anyway — you have crashed — so the
-    /// denominator is floored. The collision is detected elsewhere; this just
-    /// makes sure the numbers stay finite until it is.
+    /// Softening: distances are floored at each body's own radius. Below that
+    /// you have crashed; this only keeps the arithmetic finite until the
+    /// collision check (which lives elsewhere) notices.
     [[nodiscard]] Vec3 accelerationAt(const Vec3& position) const noexcept;
 
-    /// Index of the source with the strongest pull at \p position, or
-    /// npos when the field has no sources.
-    ///
-    /// This is what a sphere-of-influence test reduces to. Needed later to
-    /// decide which body a spacecraft's orbital elements should be measured
-    /// against, and which ellipse to freeze it onto when it goes on rails.
+    /// Index of the source with the strongest pull at \p position, or npos
+    /// when the field has no sources. A sphere-of-influence test: decides
+    /// which body a craft's elements are measured against, and which ellipse
+    /// it freezes onto when it goes on rails.
     [[nodiscard]] std::size_t dominantSourceIndex(const Vec3& position) const noexcept;
 
     [[nodiscard]] std::span<const GravitySource> sources() const noexcept { return cache_; }
 
-    /// Cached position of one source. Use this instead of calling
-    /// IEphemeris::sample() again for a body the field has already sampled: the
-    /// sample costs a Kepler solve, and the cache costs a load.
+    /// Cached position of one source. Use instead of re-calling sample():
+    /// a sample costs a Kepler solve, the cache costs a load.
     [[nodiscard]] const Vec3& positionOf(std::size_t index) const noexcept {
         return cache_[index].position;
     }

@@ -12,33 +12,19 @@ GravityField::GravityField(std::vector<const IEphemeris*> sources)
     cache_.resize(bodies_.size());
     minimumRadiusSquared_.resize(bodies_.size());
     for (std::size_t i = 0; i < bodies_.size(); ++i) {
-        // Soften at the body's own surface. Inside a body the point-mass model
-        // is wrong regardless (the enclosed mass drops as r^3), and anything
-        // that gets there has crashed. This only keeps the arithmetic finite
-        // long enough for the collision check to notice.
+        // Soften at the body's own surface: inside it the point-mass model
+        // is wrong regardless, and anything there has crashed (see header).
         const double radius = bodies_[i]->meanRadius();
         minimumRadiusSquared_[i] = radius * radius;
     }
 }
 
 void GravityField::refresh(Epoch t) {
-    // MEMOISED ON THE EPOCH, and this is not a micro-optimisation.
-    //
-    // Every spacecraft in a step is integrated over the SAME four stage epochs, so
-    // a naive per-craft integrate() call re-samples the entire solar system four
-    // times per craft: 4N refreshes per step instead of 4. Each refresh solves
-    // Kepler's equation for eleven bodies, so with three craft that is 132 Kepler
-    // solves per step where twelve would do.
-    //
-    // Measured before the cache: 76 ms per frame at one simulated day per second
-    // with three satellites -- 13 fps against a 30 fps target, with the integrator
-    // dominating. The whole point of flattening the sources into a POD array was
-    // to stop paying per-craft costs for per-environment work, and calling refresh
-    // from inside the per-craft loop quietly undid it.
-    //
-    // Epoch is exact integer nanoseconds, so this comparison is exact. That
-    // matters: a float epoch would miss the cache on the last bit and the
-    // optimisation would silently do nothing.
+    // Memoised on the epoch: every craft in a step integrates over the same
+    // four stage epochs, so without the memo that is 4N refreshes per step
+    // instead of 4 (docs/DESIGN.md §5). Epoch is exact integer nanoseconds,
+    // so this comparison is exact — a float epoch would miss the cache on the
+    // last bit and the optimisation would silently do nothing.
     if (refreshed_ && sampledAt_ == t) {
         return;
     }
@@ -52,8 +38,7 @@ void GravityField::refresh(Epoch t) {
 }
 
 Vec3 GravityField::accelerationAt(const Vec3& position) const noexcept {
-    // The hot loop. Contiguous PODs, no virtual calls, no allocation, nothing
-    // the optimiser cannot see through.
+    // The hot loop: contiguous PODs, no virtual calls, no allocation.
     Vec3 acceleration{};
 
     for (std::size_t i = 0; i < cache_.size(); ++i) {
@@ -88,9 +73,7 @@ std::size_t GravityField::dominantSourceIndex(const Vec3& position) const noexce
 
     for (std::size_t i = 0; i < cache_.size(); ++i) {
         const GravitySource& source = cache_[i];
-        // Named separately from the free distanceSquared() to avoid shadowing
-        // it — -Wshadow is on precisely because a shadowed name in a physics
-        // kernel is a silent accuracy bug rather than a style nit.
+        // rSquared: avoids shadowing the free distanceSquared() (-Wshadow).
         double rSquared = distanceSquared(source.position, position);
         if (rSquared < minimumRadiusSquared_[i]) {
             rSquared = minimumRadiusSquared_[i];

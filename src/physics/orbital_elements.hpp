@@ -1,15 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Orbital elements, Kepler's equation, and the conversions between elements
-// and state vectors.
-//
-// WHY TWO REPRESENTATIONS OF THE SAME THING
-// A state vector (r, v) tells you where a body is right now. Orbital elements
-// tell you what its orbit *is*. They carry identical information, but five of
-// the six elements are constant for an unperturbed orbit while all six
-// components of the state vector change every instant.
-//
-// That is the whole trick. "Where is Jupiter in 400 years?" is an integration
-// problem in state-vector form and a single evaluation in element form.
+// and state vectors. Elements and state vectors carry identical information,
+// but five of the six elements are constant on an unperturbed orbit — "where
+// is Jupiter in 400 years?" is one evaluation in element form.
+// See docs/DESIGN.md §2.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -42,9 +36,8 @@ struct OrbitalElements {
     /// sits relative to the ascending node.
     double argumentOfPeriapsis{0.0};
 
-    /// M0 — mean anomaly at `epoch`. The only element that advances with time,
-    /// and it advances perfectly linearly, which is exactly why it is the one
-    /// we store rather than the true anomaly.
+    /// M0 — mean anomaly at `epoch`. The only element that advances with
+    /// time; it advances linearly, which is why it is the one stored.
     double meanAnomalyAtEpoch{0.0};
 
     /// The instant at which meanAnomalyAtEpoch applies.
@@ -52,8 +45,7 @@ struct OrbitalElements {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Derived quantities. Each needs GM because an orbit's *shape* is geometry but
-// its *timing* depends on the mass it goes around.
+// Derived quantities. Each needs GM: shape is geometry, timing needs the mass.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Distance at the closest point of the orbit, metres.
@@ -77,17 +69,9 @@ struct OrbitalElements {
 
 /// Solve M = E - e*sin(E) for the eccentric anomaly E, in radians.
 ///
-/// This equation has no closed-form solution — Kepler said as much in 1609 and
-/// nobody has improved on that since. It is solved numerically, here by
-/// Newton-Raphson, which converges quadratically and typically needs three or
-/// four iterations.
-///
-/// The starting guess matters. For low eccentricity, E ≈ M + e*sin(M) is
-/// excellent. Near e = 1 the function flattens around periapsis and a naive
-/// guess can send Newton off to a wrong root or oscillate forever, so high
-/// eccentricities start from pi instead. If Newton fails to converge within
-/// the iteration cap we fall back to bisection, which is slower but cannot
-/// fail on a monotonic function — and this one is monotonic for all e < 1.
+/// No closed form exists; solved by Newton-Raphson (typically three or four
+/// iterations), falling back to bisection — which cannot fail on this
+/// monotonic function — if Newton does not converge.
 ///
 /// \param meanAnomaly   M, radians. Any value; wrapped internally.
 /// \param eccentricity  e, in [0, 1).
@@ -116,12 +100,8 @@ struct OrbitalElements {
 /// State vector to elements. The inverse of stateFromElements.
 ///
 /// Degenerate orbits are handled by convention rather than by failing:
-///   * circular (e ≈ 0): argumentOfPeriapsis is set to 0 and the angle is
-///     folded into the mean anomaly, since periapsis is undefined.
-///   * equatorial (i ≈ 0): longitudeOfAscendingNode is set to 0 for the same
-///     reason — the ascending node does not exist.
-/// Both conventions are standard, and both round-trip correctly through
-/// stateFromElements, which is what the tests check.
+/// circular (e ≈ 0) sets argumentOfPeriapsis to 0, equatorial (i ≈ 0) sets
+/// longitudeOfAscendingNode to 0. Both round-trip through stateFromElements.
 [[nodiscard]] OrbitalElements elementsFromState(const StateVector& state,
                                                 double gm,
                                                 Epoch t) noexcept;

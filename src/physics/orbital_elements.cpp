@@ -69,11 +69,8 @@ double solveKeplerEquation(double meanAnomaly, double eccentricity) noexcept {
         return M;                              // circular: E == M exactly
     }
 
-    // A good first guess is most of the battle. For moderate eccentricity the
-    // first-order expansion is already accurate to a few parts in a thousand.
-    // Near e = 1 the curve flattens at periapsis, the derivative approaches
-    // zero, and Newton from a nearby guess can be thrown a long way; starting
-    // from pi keeps it on the correct side of the root.
+    // Near e = 1 the curve flattens at periapsis and Newton from a nearby
+    // guess can be thrown far; starting from pi keeps it on the correct side.
     double E = (e < 0.8) ? (M + e * std::sin(M))
                          : (M < 0.0 ? -kPi : kPi);
 
@@ -81,8 +78,7 @@ double solveKeplerEquation(double meanAnomaly, double eccentricity) noexcept {
         const double f = E - e * std::sin(E) - M;
         const double fPrime = 1.0 - e * std::cos(E);
 
-        // fPrime is 1 - e*cos(E), which is bounded below by 1 - e > 0 for any
-        // e < 1, so this can only trip on a denormal or a caller passing e >= 1.
+        // fPrime >= 1 - e > 0 for e < 1; trips only on denormals or e >= 1.
         if (std::abs(fPrime) < 1e-300) {
             break;
         }
@@ -93,11 +89,9 @@ double solveKeplerEquation(double meanAnomaly, double eccentricity) noexcept {
         }
     }
 
-    // Newton did not converge. Fall back to bisection on [M - 1, M + 1]:
-    // E - e*sin(E) is strictly increasing for e < 1, and |E - M| <= e < 1, so
-    // the root is guaranteed to be inside that bracket. Bisection cannot fail
-    // on a monotonic function; it is merely slower, and a slow correct answer
-    // beats a fast wrong one in a physics kernel.
+    // Newton did not converge: bisect on [M - 1, M + 1]. |E - M| <= e < 1
+    // puts the root inside the bracket, and the function is strictly
+    // increasing for e < 1, so bisection cannot fail — merely slower.
     double low = M - 1.0;
     double high = M + 1.0;
     for (int i = 0; i < 200; ++i) {
@@ -113,9 +107,8 @@ double solveKeplerEquation(double meanAnomaly, double eccentricity) noexcept {
 }
 
 double trueAnomalyFromEccentric(double eccentricAnomaly, double eccentricity) noexcept {
-    // atan2 of the half-angle form, rather than acos of the direct form. The
-    // acos version loses the quadrant and needs a sign fix-up that is easy to
-    // get subtly wrong on the outbound versus inbound leg of an orbit.
+    // atan2 half-angle form: keeps the quadrant, unlike acos, which needs a
+    // sign fix-up that is easy to get wrong.
     const double e = eccentricity;
     const double halfE = 0.5 * eccentricAnomaly;
     return 2.0 * std::atan2(std::sqrt(1.0 + e) * std::sin(halfE),
@@ -153,10 +146,8 @@ StateVector stateFromElements(const OrbitalElements& elements, double gm, Epoch 
     const double vxPerifocal = -a * sinE * eDot;
     const double vyPerifocal = a * sqrtOneMinusESq * cosE * eDot;
 
-    // Rotate perifocal -> reference frame by R_z(Omega) R_x(i) R_z(omega).
-    // Written out rather than composed from matrix types: it is evaluated once
-    // per body per sample, the trig is shared between position and velocity,
-    // and the expanded form makes the shared subexpressions visible.
+    // Rotate perifocal -> reference frame by R_z(Omega) R_x(i) R_z(omega),
+    // written out so the trig shared by position and velocity is visible.
     const double cosO = std::cos(elements.longitudeOfAscendingNode);
     const double sinO = std::sin(elements.longitudeOfAscendingNode);
     const double cosW = std::cos(elements.argumentOfPeriapsis);
@@ -191,19 +182,14 @@ OrbitalElements elementsFromState(const StateVector& state, double gm, Epoch t) 
     const Vec3 h = cross(r, v);
     const double hMag = h.norm();
 
-    // Eccentricity vector: points at periapsis, magnitude is e. This is the
-    // Laplace-Runge-Lenz vector divided by GM, and it is conserved for a pure
-    // inverse-square force -- a fact worth remembering, because watching it
-    // rotate is how you *see* a perturbation like J2 at work.
+    // Eccentricity vector: points at periapsis, magnitude is e.
     //
     //     e = [ (v^2 - GM/r) r  -  (r . v) v ] / GM
     //
     // The scalar (v^2 - GM/r) multiplies the POSITION and (r.v) multiplies the
-    // VELOCITY, not the other way round. Writing it backwards produces a
-    // vector of plausible magnitude that is wrong by a factor which happens to
-    // approach 1 as e approaches 1 -- so it looks fine on the eccentric test
-    // orbits and is badly wrong on the near-circular ones, which are exactly
-    // the orbits real satellites fly.
+    // VELOCITY, not the other way round. Transposed, it looks plausible on
+    // eccentric orbits and is badly wrong on near-circular ones -- exactly the
+    // orbits real satellites fly.
     const Vec3 eVec = (r * (vSq - gm / rMag) - v * dot(r, v)) / gm;
     const double e = eVec.norm();
 
@@ -226,9 +212,8 @@ OrbitalElements elementsFromState(const StateVector& state, double gm, Epoch t) 
     const bool equatorial = nodeMag < kEquatorialTolerance * hMag;
     const bool circular = e < kCircularTolerance;
 
-    // Right ascension of the ascending node. Undefined for an equatorial
-    // orbit, where there is no node; convention is to set it to zero and let
-    // the argument of periapsis absorb the rotation.
+    // RAAN is undefined for an equatorial orbit; convention sets it to zero
+    // and lets the argument of periapsis absorb the rotation.
     const double raan = equatorial ? 0.0 : wrapToTwoPi(std::atan2(nodeVec.y, nodeVec.x));
     out.longitudeOfAscendingNode = raan;
 
@@ -247,9 +232,8 @@ OrbitalElements elementsFromState(const StateVector& state, double gm, Epoch t) 
         argumentOfPeriapsis = 0.0;
         trueAnomaly = wrapToTwoPi(std::atan2(dot(cross(nodeVec, r), h) / hMag, dot(nodeVec, r)));
     } else if (equatorial && !circular) {
-        // No node: measure periapsis from the x-axis (the "longitude of
-        // periapsis"). Retrograde equatorial orbits need the sign flip, since
-        // the angle runs the other way around.
+        // No node: measure periapsis from the x-axis ("longitude of
+        // periapsis"). Retrograde orbits need the sign flip.
         argumentOfPeriapsis = wrapToTwoPi(std::atan2(h.z >= 0.0 ? eVec.y : -eVec.y, eVec.x));
         trueAnomaly = wrapToTwoPi(std::atan2(dot(cross(eVec, r), h) / hMag, dot(eVec, r)));
     } else {
@@ -264,9 +248,8 @@ OrbitalElements elementsFromState(const StateVector& state, double gm, Epoch t) 
         const double E = eccentricAnomalyFromTrue(trueAnomaly, e);
         out.meanAnomalyAtEpoch = wrapToTwoPi(E - e * std::sin(E));
     } else {
-        // Hyperbolic: the mean anomaly uses hyperbolic functions instead.
-        // Recorded but not yet exercised; escape trajectories arrive with the
-        // integrator, and this branch gets its own tests then.
+        // Hyperbolic: mean anomaly via hyperbolic functions. Not yet
+        // exercised; gets its own tests when escape trajectories arrive.
         const double H = 2.0 * std::atanh(std::sqrt((e - 1.0) / (e + 1.0))
                                           * std::tan(0.5 * trueAnomaly));
         out.meanAnomalyAtEpoch = e * std::sinh(H) - H;

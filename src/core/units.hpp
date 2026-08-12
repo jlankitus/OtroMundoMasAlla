@@ -1,22 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Units and physical constants.
-//
-// THE RULE: SI EVERYWHERE INTERNALLY.
-// Metres, kilograms, seconds, radians. No exceptions inside core, physics or
-// sim. Kilometres, days, degrees and AU exist only at the boundary — parsing a
-// scenario file, printing a HUD — and are converted the moment they cross in.
-//
-// The Mars Climate Orbiter burned up in 1999 because one team's software
-// produced pound-force-seconds and another's consumed newton-seconds. The
-// interface documentation said which was expected. Nobody checked.
-//
-// WHY LITERALS AND NOT A FULL DIMENSIONAL-ANALYSIS LIBRARY
-// A templated Quantity<mass, length, time> makes unit errors a compile error,
-// which is strictly stronger than what we do here. It also makes every physics
-// expression twice as long to read and produces error messages that need their
-// own glossary. For a codebase this size the readable compromise is: SI as a
-// documented invariant, plus literals so the conversion is visible at the call
-// site. `6371.0_km` cannot be misread; `6371000.0` can.
+// Units and physical constants. THE RULE: SI everywhere internally — metres,
+// kilograms, seconds, radians. Kilometres, days, degrees and AU exist only at
+// the boundary (parsing, HUD) and convert the moment they cross in — the Mars
+// Climate Orbiter failure mode. Literals rather than a dimensional-analysis
+// library: SI as a documented invariant, with the conversion visible at the
+// call site — `6371.0_km` cannot be misread; `6371000.0` can.
 // ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 
@@ -29,13 +17,10 @@ inline constexpr double kHalfPi = 0.5 * kPi;
 
 // ── Physical ─────────────────────────────────────────────────────────────────
 
-/// Newtonian constant of gravitation, m^3 kg^-1 s^-2 (CODATA 2018).
-///
-/// Note this is the *least* precisely known fundamental constant — about 22
-/// parts per million. Which is why orbital mechanics never uses it directly:
-/// the product GM is measured by watching things orbit, to eleven or more
-/// digits. See kGm* in physics/solar_system.hpp. We keep G here only for the
-/// rare case of a body whose mass we know but whose GM nobody has published.
+/// Newtonian constant of gravitation, m^3 kg^-1 s^-2 (CODATA 2018). The least
+/// precisely known fundamental constant (~22 ppm); orbital mechanics uses the
+/// measured GM products instead (kGm* in physics/solar_system.hpp). Kept only
+/// for bodies with a known mass but no published GM.
 inline constexpr double kGravitationalConstant = 6.67430e-11;
 
 /// Speed of light in vacuum, m/s. Exact by definition of the metre.
@@ -52,8 +37,7 @@ inline constexpr double kSecondsPerMinute = 60.0;
 inline constexpr double kSecondsPerHour   = 3600.0;
 inline constexpr double kSecondsPerDay    = 86'400.0;
 
-/// A Julian year is exactly 365.25 days by definition. It is the year used in
-/// astronomy precisely because it never varies, unlike the calendar year.
+/// Exactly 365.25 days by definition — astronomy's year, because it never varies.
 inline constexpr double kSecondsPerJulianYear = 365.25 * kSecondsPerDay;
 
 /// Julian Date of the J2000 epoch (2000-01-01 12:00:00 TT).
@@ -63,9 +47,8 @@ inline constexpr double kJulianDateJ2000 = 2'451'545.0;
 
 namespace omma::literals {
 
-// Each literal has two overloads because C++ passes `1.5_km` as long double
-// and `1500_km` as unsigned long long, and requiring a decimal point on every
-// distance is the kind of papercut that makes people stop using the literal.
+// Two overloads each: C++ passes `1.5_km` as long double and `1500_km` as
+// unsigned long long, and requiring a decimal point is a papercut.
 
 // ── Length → metres ──────────────────────────────────────────────────────────
 [[nodiscard]] constexpr double operator""_m (long double v) noexcept { return static_cast<double>(v); }
@@ -95,9 +78,8 @@ namespace omma::literals {
 [[nodiscard]] constexpr double operator""_kmps(long double v) noexcept { return static_cast<double>(v) * 1000.0; }
 [[nodiscard]] constexpr double operator""_kmps(unsigned long long v) noexcept { return static_cast<double>(v) * 1000.0; }
 
-// Time literals deliberately absent: use std::chrono_literals (1s, 90min, 24h).
-// Reimplementing them would give us a double where chrono gives us an exact
-// integer duration, which is the opposite of what core/epoch.hpp wants.
+// Time literals deliberately absent: use std::chrono_literals (1s, 90min, 24h),
+// which give the exact integer durations core/epoch.hpp wants; ours would not.
 
 }  // namespace omma::literals
 
