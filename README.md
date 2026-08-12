@@ -171,6 +171,45 @@ self-consistent once a whole scene has been composed.
 python tools/qa_render.py ./build/windows/bin/Release/omma-ascii --png-dir /tmp/shots
 ```
 
+### Temporal QA
+
+Everything above checks a *single* frame. Flicker, stale pixels, tearing and frame
+pacing are properties of a **sequence** — and `--snapshot` bypasses the game loop
+entirely, so the code where those bugs live had never been executed by a test.
+
+```bash
+python tools/temporal_qa.py ./build/windows/bin/Release/omma-ascii --frames 90
+```
+
+`omma-ascii --record N` runs the *live* loop headlessly, substituting the only two
+nondeterministic inputs — the wall clock becomes a fixed synthetic delta, the
+keyboard becomes one scripted character per frame — and writes every frame's byte
+stream to disk. Which is software-in-the-loop applied to a renderer.
+
+`tools/vterm.py` then replays those frames through a virtual terminal that keeps
+its cell buffer **across** frames. That persistence is the point: `[H` plus
+overwrite means frame N inherits whatever frame N−1 left behind, and a stateless
+parser cannot see a stale pixel by construction.
+
+Two assertions do the real work:
+
+| | |
+|---|---|
+| **paused frames are byte-identical** | nothing moves and the reported frame rate is pinned, so *any* difference is nondeterminism in the render path |
+| **every cell is written every frame** | a cell the frame didn't write is a stale pixel waiting to happen |
+
+And motion is projected into still images, because you cannot review a video in a
+text log:
+
+- **space-time slice** — one screen row from every frame, stacked, so the vertical
+  axis is *time*. A stationary body is a vertical line; a moving planet a diagonal;
+  **flicker a dashed line**; tearing a horizontal break. Same trick as a slit-scan
+  photograph.
+- **change heatmap** — how many times each cell changed. Paused, it must be black.
+- **filmstrip** — frames in a grid, for ordinary looks-right checking.
+
+### Single-frame QA
+
 Drives the real binary across thirteen option combinations and asserts the
 output decodes as UTF-8, has exactly the requested cell geometry, contains only
 escapes we deliberately emit, closes its SGR state, and stays inside a size

@@ -43,8 +43,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace con = omma::console;
@@ -598,6 +601,22 @@ struct Options {
     double      elevationDeg{30.0};
     double      azimuthDeg{0.0};
     bool        showHelpAndExit{false};
+
+    // ── record mode ─────────────────────────────────────────────────────────
+    // Runs the LIVE loop headlessly, with a synthetic frame clock and a scripted
+    // key stream, writing every frame's byte stream to disk.
+    //
+    // This exists because --snapshot bypasses the game loop entirely. Every
+    // temporal defect — flicker, stale pixels, tearing, frame pacing — lives in
+    // code that no test had ever executed. Replacing the two nondeterministic
+    // inputs (the wall clock and the keyboard) with scripted ones makes the whole
+    // loop reproducible and assertable, which is software-in-the-loop applied to
+    // a renderer.
+    int         recordFrames{0};
+    std::string recordDir{"frames"};
+    double      frameDeltaSeconds{1.0 / 30.0};
+    std::string keys;             ///< one character per frame; '.' means none
+    bool        startPaused{false};
 };
 
 void printUsage() {
@@ -614,6 +633,13 @@ void printUsage() {
         "  --date YYYY-MM-DD   start epoch\n"
         "  --tilt DEG          camera elevation; 90 is top-down, 30 is dimetric\n"
         "  --spin DEG          camera azimuth\n"
+        "\n"
+        "  --record N          run the live loop headlessly for N frames and\n"
+        "                      write each frame's bytes to --record-dir\n"
+        "  --record-dir DIR    where to write them (default: frames)\n"
+        "  --frame-delta MS    synthetic wall-clock time per frame (default 33.3)\n"
+        "  --keys STRING       one key per frame; '.' means no key that frame\n"
+        "  --paused            start paused\n"
         "  --help              this text");
 }
 
@@ -663,6 +689,25 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.zoomPreset = static_cast<std::size_t>(n - 1);
         } else if (arg == "--focus") {
             out.focus = next();
+        } else if (arg == "--record") {
+            out.recordFrames = std::atoi(next().c_str());
+            if (out.recordFrames <= 0) {
+                std::fprintf(stderr, "--record wants a positive frame count\n");
+                return false;
+            }
+        } else if (arg == "--record-dir") {
+            out.recordDir = next();
+        } else if (arg == "--frame-delta") {
+            const double ms = std::atof(next().c_str());
+            if (!(ms > 0.0)) {
+                std::fprintf(stderr, "--frame-delta wants milliseconds > 0\n");
+                return false;
+            }
+            out.frameDeltaSeconds = ms / 1000.0;
+        } else if (arg == "--keys") {
+            out.keys = next();
+        } else if (arg == "--paused") {
+            out.startPaused = true;
         } else if (arg == "--tilt") {
             out.elevationDeg = std::atof(next().c_str());
         } else if (arg == "--spin") {
@@ -707,6 +752,85 @@ Camera makePixelCamera(const Canvas& canvas, const Options& options) {
     return camera;
 }
 
+/// Run the live loop headlessly and write every frame to disk.
+///
+/// This is the SAME loop the interactive path runs — same clock, same pacer, same
+/// render(), same present() with homeCursor on, so the cursor-home and
+/// erase-to-end-of-line escapes are exercised. The only substitutions are the two
+/// nondeterministic inputs:
+///
+///     steady_clock::now()  ->  a fixed synthetic delta
+///     con::pollKey()       ->  one scripted character per frame
+///
+/// Which is the whole trick. Replace a system's sensors with scripted ones and
+/// capture its actuator, and a previously untestable feedback loop becomes a pure
+/// function you can assert on. The frame rate reported to the HUD is pinned to
+/// the synthetic rate rather than exponentially smoothed, so a paused recording
+/// is byte-identical frame to frame — which turns "does it flicker" into a
+/// one-line check.
+int runRecording(const SolarSystem& system, const Options& options) {
+    const int columns = options.columns > 0 ? options.columns : 120;
+    const int rows = options.rows > 0 ? options.rows : 36;
+
+    Canvas canvas{columns, rows};
+    Camera camera = makePixelCamera(canvas, options);
+    omma::SimClock clock{std::chrono::seconds{1}, Epoch::fromCivil(options.date)};
+    omma::StepPacer pacer{std::chrono::seconds{1}, 1'000'000'000'000LL};
+
+    ViewState view{};
+    view.focusIndex = focusIndexFor(system, options.focus);
+    view.paused = options.startPaused;
+
+    std::error_code error;
+    std::filesystem::create_directories(options.recordDir, error);
+    if (error) {
+        std::fprintf(stderr, "could not create %s: %s\n",
+                     options.recordDir.c_str(), error.message().c_str());
+        return 1;
+    }
+
+    const double reportedFps = 1.0 / options.frameDeltaSeconds;
+    std::string frame;
+
+    for (int i = 0; i < options.recordFrames; ++i) {
+        if (static_cast<std::size_t>(i) < options.keys.size() && options.keys[static_cast<std::size_t>(i)] != '.') {
+            handleKey(options.keys[static_cast<std::size_t>(i)], view, camera, system);
+            if (!view.running) {
+                break;
+            }
+        }
+
+        const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
+        clock.step(pacer.stepsForFrame(options.frameDeltaSeconds, warp));
+
+        // Timings are deliberately zeroed rather than measured: a recording must
+        // not depend on how fast the machine writing it happens to be.
+        render(canvas, camera, system, clock, view, reportedFps,
+               pacer.lastFrameWasClamped(), FrameTimings{});
+        canvas.present(frame, options.depth, options.blocks, /*homeCursor=*/true);
+
+        char name[64];
+        std::snprintf(name, sizeof(name), "frame_%05d.bin", i);
+        const std::filesystem::path path =
+            std::filesystem::path{options.recordDir} / name;
+
+        // Binary, so nothing translates a newline on the way to disk. A recording
+        // that differs from what the terminal would have received is not a
+        // recording of anything.
+        std::ofstream out{path, std::ios::binary | std::ios::trunc};
+        if (!out) {
+            std::fprintf(stderr, "could not write %s\n", path.string().c_str());
+            return 1;
+        }
+        out.write(frame.data(), static_cast<std::streamsize>(frame.size()));
+    }
+
+    std::printf("%d frames -> %s  (%dx%d cells, %.2f ms/frame synthetic)\n",
+                options.recordFrames, options.recordDir.c_str(),
+                columns, rows, options.frameDeltaSeconds * 1000.0);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -724,6 +848,11 @@ int main(int argc, char** argv) {
     }
 
     const SolarSystem system = SolarSystem::standard();
+
+    // ── record: the live loop, headless and deterministic ───────────────────
+    if (options.recordFrames > 0) {
+        return runRecording(system, options);
+    }
 
     // ── snapshot: one frame, no terminal takeover ───────────────────────────
     if (options.snapshot) {
