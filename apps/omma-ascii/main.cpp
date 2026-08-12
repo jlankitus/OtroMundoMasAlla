@@ -239,14 +239,22 @@ void drawScene(Canvas& canvas, Camera& camera, const SolarSystem& system,
     const double metresPerPixel = camera.metresPerRow();
 
     if (view.showOrbits) {
-        for (std::size_t i = 0; i < system.size(); ++i) {
-            const auto* kepler =
-                dynamic_cast<const omma::KeplerEphemeris*>(system.bodies()[i].get());
-            if (kepler == nullptr) {
-                continue;
+        // Reference orbits first, the focused one last, so the bright line is
+        // never crossed out by a dim one drawn after it.
+        for (int pass = 0; pass < 2; ++pass) {
+            for (std::size_t i = 0; i < system.size(); ++i) {
+                const bool focused = i == view.focusIndex;
+                if (focused != (pass == 1)) {
+                    continue;
+                }
+                const auto* kepler =
+                    dynamic_cast<const omma::KeplerEphemeris*>(system.bodies()[i].get());
+                if (kepler == nullptr) {
+                    continue;
+                }
+                drawOrbit(canvas, camera, *kepler, t,
+                          omma::app::orbitColourFor(i, focused));
             }
-            const BodyStyle& style = styleFor(i);
-            drawOrbit(canvas, camera, *kepler, t, style.colour.scaled(style.trailScale));
         }
     }
 
@@ -321,6 +329,8 @@ void drawScene(Canvas& canvas, Camera& camera, const SolarSystem& system,
         }
         canvas.text(cellX, cellY, name,
                     v.index == view.focusIndex ? Ink::BrightWhite : Ink::BrightBlack);
+        // BrightBlack is a legible slate now, not the almost-invisible grey the
+        // ANSI palette calls by that name.
         placed.push_back({cellX, cellY});
     };
 
@@ -373,7 +383,7 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
     std::snprintf(line, sizeof(line), "T+%.1f d  |  %.0f fps ",
                   omma::toSeconds(clock.elapsed()) / kSecondsPerDay, framesPerSecond);
     canvas.text(std::max(1, canvas.width() - static_cast<int>(std::string(line).size()) - 1),
-                0, line, Ink::BrightBlack);
+                0, line, Ink::BrightBlack);   // now a readable slate, not near-black
 
     const auto& warp = kWarpLadder[view.warpIndex];
     std::snprintf(line, sizeof(line),
@@ -392,7 +402,7 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
     canvas.text(1, h - 1,
                 " space pause  -/= warp  [/] zoom  1-5 presets  r/t tilt  z/x spin"
                 "  tab focus  o orbits  ? help  q quit",
-                Ink::BrightBlack);
+                Ink::White);
 
     // ── focus panel ─────────────────────────────────────────────────────────
     int row = 2;
@@ -426,8 +436,12 @@ void drawHud(Canvas& canvas, const SolarSystem& system, const omma::SimClock& cl
                  return std::string{b}; }()},
         };
         for (const auto& [label, value] : fields) {
-            std::snprintf(line, sizeof(line), "  %-6s %s", label, value.c_str());
-            canvas.text(1, row++, line, Ink::White);
+            // Label dim, value bright: the numbers are what you are reading, and
+            // a uniform grey makes you hunt for them.
+            std::snprintf(line, sizeof(line), "  %-6s", label);
+            canvas.text(1, row, line, Ink::BrightBlack);
+            canvas.text(9, row, value, Ink::BrightCyan);
+            ++row;
         }
     } else {
         canvas.text(1, row++, "  the frame origin", Ink::BrightBlack);
@@ -488,6 +502,13 @@ void render(Canvas& canvas, Camera& camera, const SolarSystem& system,
             double framesPerSecond, bool clamped, const FrameTimings& timings) {
     const Epoch t = clock.now();
     canvas.clear();
+    // Deep space rather than pure black: a hint of blue reads as sky instead of
+    // as a hole, and gives the dimmest orbit line something to sit against.
+    for (int py = 0; py < canvas.pixelHeight(); ++py) {
+        for (int px = 0; px < canvas.pixelWidth(); ++px) {
+            canvas.setPixel(px, py, omma::app::kSpace);
+        }
+    }
     camera.setCentre(system[static_cast<BodyId>(view.focusIndex)].sample(t).position
                      + view.panOffset);
     drawScene(canvas, camera, system, t, view);

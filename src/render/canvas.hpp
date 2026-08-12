@@ -81,13 +81,23 @@ struct Rgb {
 
 inline constexpr Rgb kBlack{0, 0, 0};
 
-/// The sixteen ANSI colours, for the character layer and for degraded output.
+/// Named colours for the character layer.
+///
+/// These are now just handles for Rgb values, not ANSI codes. The character
+/// layer went full 24-bit for a concrete reason: HUD text drawn in
+/// Ink::BrightBlack was unreadable on a black scene, and no combination of the
+/// sixteen ANSI colours fixes that — the palette has no legible dim grey, and
+/// what it does have depends on the user's colour scheme. Picking an actual
+/// rgb(140,150,165) is both readable and predictable.
 enum class Ink : std::uint8_t {
     Default = 0,
     Black, Red, Green, Yellow, Blue, Magenta, Cyan, White,
     BrightBlack, BrightRed, BrightGreen, BrightYellow,
     BrightBlue, BrightMagenta, BrightCyan, BrightWhite,
 };
+
+/// The Rgb an Ink stands for.
+[[nodiscard]] Rgb inkToRgb(Ink ink) noexcept;
 
 /// How much colour the terminal can be trusted with.
 enum class ColourDepth : std::uint8_t {
@@ -144,8 +154,15 @@ public:
     // renderer whose every call must be guarded by the caller is a renderer
     // full of duplicated guards, and clipping is what a viewport is for.
 
-    void put(int cx, int cy, char glyph, Ink ink = Ink::Default) noexcept;
-    void text(int cx, int cy, std::string_view s, Ink ink = Ink::Default) noexcept;
+    void put(int cx, int cy, char glyph, Rgb fg) noexcept;
+    void text(int cx, int cy, std::string_view s, Rgb fg) noexcept;
+
+    void put(int cx, int cy, char glyph, Ink ink = Ink::Default) noexcept {
+        put(cx, cy, glyph, inkToRgb(ink));
+    }
+    void text(int cx, int cy, std::string_view s, Ink ink = Ink::Default) noexcept {
+        text(cx, cy, s, inkToRgb(ink));
+    }
 
     /// Blank a rectangle of cells AND the pixels underneath them. Used to
     /// clear a strip before drawing HUD text over a busy scene.
@@ -196,7 +213,7 @@ public:
 private:
     struct Cell {
         char glyph{' '};
-        Ink  ink{Ink::Default};
+        Rgb  fg{204, 204, 204};
     };
 
     [[nodiscard]] std::size_t cellIndex(int cx, int cy) const noexcept {

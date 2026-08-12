@@ -20,6 +20,7 @@ properties of the real output:
   * frame size stays within a sane budget for a 30 Hz redraw
   * ascii mode emits no escapes at all
   * full-cell mode emits no multi-byte glyphs
+  * every half block has an explicit foreground set since the last reset
 
 Optionally writes a PNG per case so the frames can be looked at.
 """
@@ -33,6 +34,11 @@ import subprocess
 import sys
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
+
+# A foreground-setting escape: 24-bit, or one of the sixteen ANSI colours.
+FG_ESCAPE = re.compile(r"\x1b\[(?:38;2;\d+;\d+;\d+|3[0-7]|9[0-7])m")
+RESET = "\x1b[0m"
+ANY_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 ERASE_LINE = "\x1b[K"
 CURSOR_HOME = "\x1b[H"
 HALF_BLOCK = "▀"
@@ -111,7 +117,42 @@ def check(case: Case, raw: bytes) -> list[str]:
         if not any(c in interior for c in ".:-=+*#%@"):
             problems.append("ascii mode produced no density-ramp glyphs")
 
-    # ── 7. size budget ──────────────────────────────────────────────────────
+    # ── 7. every half block has an explicit foreground ──────────────────────
+    # A '▀' paints its top pixel with the terminal's CURRENT foreground. If no
+    # foreground escape has been emitted since the last reset, that colour is the
+    # terminal's DEFAULT -- a light grey -- and the block renders as a bright
+    # artifact instead of the pixel it represents.
+    #
+    # This shipped. It produced grey blocks scattered along every orbit, moving
+    # whenever the window was resized (because resizing changes which cells are
+    # full-cell versus half-block). It is a property of the byte stream, so it is
+    # checkable here and invisible to any unit test of Canvas in isolation.
+    if case.checks.get("colour", True) and case.checks.get("half_blocks") is not False:
+        fg_known = False
+        orphans = 0
+        i = 0
+        while i < len(text):
+            if text.startswith(RESET, i):
+                fg_known = False
+                i += len(RESET)
+                continue
+            match = FG_ESCAPE.match(text, i)
+            if match:
+                fg_known = True
+                i = match.end()
+                continue
+            match = ANY_ESCAPE.match(text, i)
+            if match:
+                i = match.end()           # some other escape: skip it whole
+                continue
+            if text[i] == HALF_BLOCK and not fg_known:
+                orphans += 1
+            i += 1
+        if orphans:
+            problems.append(f"{orphans} half blocks with no foreground set "
+                            f"(they render in the terminal default colour)")
+
+    # ── 8. size budget ──────────────────────────────────────────────────────
     budget = case.checks.get("max_bytes")
     if budget and len(raw) > budget:
         problems.append(f"frame is {len(raw)} bytes, budget {budget}")

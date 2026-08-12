@@ -7,15 +7,32 @@
 namespace omma::render {
 namespace {
 
-/// SGR foreground escape for each Ink. Index matches the enum.
-constexpr std::string_view kInkCodes[] = {
-    "\033[0m",
-    "\033[30m", "\033[31m", "\033[32m", "\033[33m",
-    "\033[34m", "\033[35m", "\033[36m", "\033[37m",
-    "\033[90m", "\033[91m", "\033[92m", "\033[93m",
-    "\033[94m", "\033[95m", "\033[96m", "\033[97m",
+/// Rgb for each Ink. Index matches the enum.
+///
+/// Chosen for legibility on a near-black scene rather than to imitate a terminal
+/// palette. In particular BrightBlack is a readable slate grey, not the
+/// almost-invisible rgb(118,118,118) most schemes use -- HUD text in that colour
+/// on a black starfield is the specific thing that made the display hard to read.
+constexpr Rgb kInkColours[] = {
+    /* Default       */ {204, 208, 214},
+    /* Black         */ { 12,  14,  18},
+    /* Red           */ {214,  90,  74},
+    /* Green         */ { 96, 190, 126},
+    /* Yellow        */ {214, 178,  96},
+    /* Blue          */ { 90, 130, 214},
+    /* Magenta       */ {186, 110, 190},
+    /* Cyan          */ { 96, 186, 196},
+    /* White         */ {188, 194, 204},
+    /* BrightBlack   */ {132, 142, 158},
+    /* BrightRed     */ {246, 122,  98},
+    /* BrightGreen   */ {132, 226, 156},
+    /* BrightYellow  */ {248, 214, 128},
+    /* BrightBlue    */ {126, 168, 246},
+    /* BrightMagenta */ {224, 148, 226},
+    /* BrightCyan    */ {126, 226, 234},
+    /* BrightWhite   */ {242, 246, 252},
 };
-static_assert(std::size(kInkCodes) == 17, "one code per Ink value");
+static_assert(std::size(kInkColours) == 17, "one colour per Ink value");
 
 /// Density ramp for the no-colour presentation, darkest first. Chosen for even
 /// perceived steps in a typical monospace font rather than for ASCII order —
@@ -76,6 +93,11 @@ void appendAnsi16(std::string& out, Rgb colour, bool background) {
 
 }  // namespace
 
+Rgb inkToRgb(Ink ink) noexcept {
+    const auto index = static_cast<std::size_t>(ink);
+    return kInkColours[index < std::size(kInkColours) ? index : 0];
+}
+
 Canvas::Canvas(int cellWidth, int cellHeight)
     : cellWidth_{std::max(1, cellWidth)}, cellHeight_{std::max(1, cellHeight)} {
     cells_.assign(static_cast<std::size_t>(cellWidth_) * static_cast<std::size_t>(cellHeight_),
@@ -102,16 +124,16 @@ void Canvas::clear() noexcept {
 
 // ─── character layer ─────────────────────────────────────────────────────────
 
-void Canvas::put(int cx, int cy, char glyph, Ink ink) noexcept {
+void Canvas::put(int cx, int cy, char glyph, Rgb fg) noexcept {
     if (!contains(cx, cy)) {
         return;
     }
-    cells_[cellIndex(cx, cy)] = Cell{glyph, ink};
+    cells_[cellIndex(cx, cy)] = Cell{glyph, fg};
 }
 
-void Canvas::text(int cx, int cy, std::string_view s, Ink ink) noexcept {
+void Canvas::text(int cx, int cy, std::string_view s, Rgb fg) noexcept {
     for (std::size_t i = 0; i < s.size(); ++i) {
-        put(cx + static_cast<int>(i), cy, s[i], ink);
+        put(cx + static_cast<int>(i), cy, s[i], fg);
     }
 }
 
@@ -357,10 +379,26 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
     // Track what the terminal currently believes, so an escape is emitted only
     // when something actually changes. On a mostly-black starfield this is the
     // difference between 200 KB and 15 KB per frame.
-    bool haveState = false;
+    //
+    // TWO FLAGS, NOT ONE. This was a real bug and a nasty one to see.
+    //
+    // A cell whose two halves match is emitted as a SPACE with a background
+    // colour, which never touches the foreground. The original code still set a
+    // single `haveState` flag afterwards, asserting that both channels were
+    // known. The next half-block whose top pixel happened to match the stale
+    // `currentFg` therefore skipped its foreground escape and rendered in
+    // whatever the last reset left behind -- the terminal's DEFAULT foreground,
+    // a light grey.
+    //
+    // The visible symptom was light grey blocks scattered along every orbit, at
+    // exactly the cells where a full-cell run meets a half block of the same
+    // colour, which is what a near-horizontal line does at every pixel-row
+    // transition. Foreground and background validity are separate facts.
+    bool fgKnown = false;
+    bool bgKnown = false;
     Rgb currentFg{};
     Rgb currentBg{};
-    Ink currentInk = Ink::Default;
+    Rgb currentInk{};
     bool inCharacterMode = false;
 
     if (depth != ColourDepth::Ascii) {
@@ -392,15 +430,21 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
                     out += cell.glyph;
                     continue;
                 }
-                if (!inCharacterMode || cell.ink != currentInk || haveState) {
+                if (!inCharacterMode || !(cell.fg == currentInk)) {
                     // Reset first: leaving pixel mode means clearing whatever
                     // background colour the half-blocks left behind, otherwise
                     // HUD text inherits a planet's colour as its backdrop.
                     out += "\033[0m";
-                    out += kInkCodes[static_cast<std::size_t>(cell.ink)];
-                    currentInk = cell.ink;
+                    if (depth == ColourDepth::TrueColour) {
+                        appendTrueColour(out, cell.fg, /*background=*/false);
+                    } else {
+                        appendAnsi16(out, cell.fg, /*background=*/false);
+                    }
+                    currentInk = cell.fg;
                     inCharacterMode = true;
-                    haveState = false;
+                    // The reset invalidated both pixel channels.
+                    fgKnown = false;
+                    bgKnown = false;
                 }
                 out += cell.glyph;
                 continue;
@@ -418,48 +462,52 @@ void Canvas::present(std::string& out, ColourDepth depth, BlockStyle blocks,
 
             inCharacterMode = false;
 
+            const auto emitColour = [&](Rgb colour, bool background) {
+                if (depth == ColourDepth::TrueColour) {
+                    appendTrueColour(out, colour, background);
+                } else {
+                    appendAnsi16(out, colour, background);
+                }
+            };
+
             if (top == bottom) {
                 // Both halves the same: paint the whole cell as background and
-                // emit a space. One byte instead of the three that U+2580
-                // costs in UTF-8 — and most of a space scene is empty.
-                if (!haveState || !(currentBg == top)) {
-                    if (depth == ColourDepth::TrueColour) {
-                        appendTrueColour(out, top, /*background=*/true);
-                    } else {
-                        appendAnsi16(out, top, /*background=*/true);
-                    }
+                // emit a space. One byte instead of the three that U+2580 costs
+                // in UTF-8 — and most of a space scene is empty.
+                //
+                // Note what this does NOT do: touch the foreground, or claim to
+                // know it. bgKnown only.
+                if (!bgKnown || !(currentBg == top)) {
+                    emitColour(top, /*background=*/true);
                     currentBg = top;
-                    haveState = true;
+                    bgKnown = true;
                 }
                 out += ' ';
                 continue;
             }
 
-            if (!haveState || !(currentFg == top)) {
-                if (depth == ColourDepth::TrueColour) {
-                    appendTrueColour(out, top, /*background=*/false);
-                } else {
-                    appendAnsi16(out, top, /*background=*/false);
-                }
+            if (!fgKnown || !(currentFg == top)) {
+                emitColour(top, /*background=*/false);
                 currentFg = top;
+                fgKnown = true;
             }
-            if (!haveState || !(currentBg == bottom)) {
-                if (depth == ColourDepth::TrueColour) {
-                    appendTrueColour(out, bottom, /*background=*/true);
-                } else {
-                    appendAnsi16(out, bottom, /*background=*/true);
-                }
+            if (!bgKnown || !(currentBg == bottom)) {
+                emitColour(bottom, /*background=*/true);
                 currentBg = bottom;
+                bgKnown = true;
             }
-            haveState = true;
             out += "▀";       // upper half block
         }
 
         if (depth != ColourDepth::Ascii) {
             // Reset before the newline. Without this the last cell's background
             // colour stretches across the rest of the terminal row.
+            //
+            // A reset clears BOTH channels, so both flags have to drop. Leaving
+            // one set is the bug this whole comment block exists to prevent.
             out += "\033[0m";
-            haveState = false;
+            fgKnown = false;
+            bgKnown = false;
             inCharacterMode = false;
         }
         if (homeCursor) {

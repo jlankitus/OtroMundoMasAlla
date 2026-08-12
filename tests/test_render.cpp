@@ -328,6 +328,49 @@ TEST_CASE("a radius-1 disc is a plus, not a 3x3 square",
     REQUIRE_FALSE(lit(11, 11));
 }
 
+TEST_CASE("a half block always gets an explicit foreground",
+          "[render][canvas][regression]") {
+    // The bug that scattered light grey blocks along every orbit, and moved them
+    // around whenever the window was resized.
+    //
+    // A '▀' paints its top pixel with the terminal's CURRENT foreground. Three
+    // cells in sequence were enough to break it:
+    //
+    //   cell 0  a character  -> emits "\033[0m" + its ink. The reset changes the
+    //                           terminal's foreground to the HUD colour.
+    //   cell 1  halves equal  -> emitted as a SPACE with a background only. A
+    //                           space never touches the foreground -- but the old
+    //                           code set a single `haveState` flag here, claiming
+    //                           BOTH channels were now known.
+    //   cell 2  halves differ -> its top pixel happened to match the stale
+    //                           `currentFg`, so the foreground escape was
+    //                           skipped, and the block rendered in the HUD's grey.
+    //
+    // Foreground and background validity are separate facts and needed separate
+    // flags. Invisible to every other test here, because it only appears in a
+    // composed frame; found by auditing the byte stream of a real render.
+    Canvas canvas{3, 1};
+    canvas.put(0, 0, 'X', Ink::BrightBlack);
+    // Cell 1 stays black in both halves -> the space path.
+    // Cell 2 differs -> the half-block path, top pixel black like the stale value.
+    canvas.setPixel(2, 1, Rgb{200, 40, 40});
+
+    std::string out;
+    canvas.present(out, ColourDepth::TrueColour, BlockStyle::HalfBlocks, false);
+
+    const std::size_t blockAt = out.find("\xE2\x96\x80");
+    REQUIRE(blockAt != std::string::npos);
+
+    // Walk the prefix and require a foreground escape after the last reset.
+    const std::string prefix = out.substr(0, blockAt);
+    const std::size_t lastReset = prefix.rfind("\033[0m");
+    REQUIRE(lastReset != std::string::npos);
+    const std::string sinceReset = prefix.substr(lastReset + 4);
+
+    INFO("bytes since the last reset: " << sinceReset);
+    REQUIRE(sinceReset.find("\033[38;2;") != std::string::npos);
+}
+
 TEST_CASE("full-cell mode emits no multi-byte glyphs",
           "[render][canvas][regression]") {
     // The fallback for a console that cannot be put into UTF-8. Half blocks are
