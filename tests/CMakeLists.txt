@@ -37,6 +37,7 @@ add_executable(omma_tests
     test_sim_clock.cpp
     test_solar_system.cpp
     test_vec3.cpp
+    test_world.cpp
     test_version.cpp
 )
 
@@ -45,6 +46,7 @@ target_link_libraries(omma_tests
         omma::core
         omma::physics
         omma::render
+        omma::sim
         omma::compile_options
         Catch2::Catch2WithMain
 )
