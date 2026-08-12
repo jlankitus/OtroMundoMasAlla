@@ -85,6 +85,19 @@ struct OrbitalElements {
 [[nodiscard]] double eccentricAnomalyFromTrue(double trueAnomaly,
                                               double eccentricity) noexcept;
 
+/// Unit vectors of the perifocal frame, expressed in reference coordinates:
+/// p toward periapsis, q 90 degrees ahead in the direction of motion.
+///
+/// This is the R_z(Omega) R_x(i) R_z(omega) rotation written out once. Anything
+/// that walks around an orbit — stateFromElements, an ellipse being drawn —
+/// maps perifocal (x, y) through it as origin + p*x + q*y.
+struct PerifocalBasis {
+    Vec3 p;
+    Vec3 q;
+};
+
+[[nodiscard]] PerifocalBasis perifocalBasis(const OrbitalElements& e) noexcept;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The conversions
 // ─────────────────────────────────────────────────────────────────────────────

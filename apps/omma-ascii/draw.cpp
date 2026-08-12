@@ -57,22 +57,10 @@ void drawEllipse(Canvas& canvas, const Camera& camera,
         return;
     }
 
-    // Perifocal-to-reference rotation, computed once for the whole ellipse.
-    // Full 3x3: the z component is the entire reason inclination is visible.
-    const double cosO = std::cos(elements.longitudeOfAscendingNode);
-    const double sinO = std::sin(elements.longitudeOfAscendingNode);
-    const double cosW = std::cos(elements.argumentOfPeriapsis);
-    const double sinW = std::sin(elements.argumentOfPeriapsis);
-    const double cosI = std::cos(elements.inclination);
-    const double sinI = std::sin(elements.inclination);
-
-    const double m11 = cosO * cosW - sinO * sinW * cosI;
-    const double m12 = -cosO * sinW - sinO * cosW * cosI;
-    const double m21 = sinO * cosW + cosO * sinW * cosI;
-    const double m22 = -sinO * sinW + cosO * cosW * cosI;
-    const double m31 = sinW * sinI;
-    const double m32 = cosW * sinI;
-
+    // Perifocal frame from physics, computed once for the whole ellipse. Its
+    // z components are the entire reason inclination is visible on a tilted
+    // camera.
+    const auto [p, q] = perifocalBasis(elements);
     const double b = a * std::sqrt(1.0 - e * e);
 
     constexpr int kSamples = 256;
@@ -85,9 +73,7 @@ void drawEllipse(Canvas& canvas, const Camera& camera,
         const double xp = a * (std::cos(E) - e);
         const double yp = b * std::sin(E);
 
-        const Vec3 world{parentOrigin.x + m11 * xp + m12 * yp,
-                         parentOrigin.y + m21 * xp + m22 * yp,
-                         parentOrigin.z + m31 * xp + m32 * yp};
+        const Vec3 world = parentOrigin + p * xp + q * yp;
 
         // Draw whenever both endpoints are representable and let Canvas::line
         // clip. Testing "is either endpoint on screen" here silently drops

@@ -244,3 +244,41 @@ TEST_CASE("orbital period matches the textbook formula", "[physics][elements]") 
     geo.semiMajorAxis = 42164.0_km;
     REQUIRE_THAT(orbitalPeriod(geo, kGmEarth) / 3600.0, WithinAbs(23.934, 0.01));
 }
+
+TEST_CASE("the perifocal basis is orthonormal and oriented with the orbit",
+          "[physics][elements]") {
+    for (const auto& [name, elements] : testOrbits()) {
+        INFO(name);
+        const auto [p, q] = perifocalBasis(elements);
+
+        // Unit length, mutually perpendicular.
+        REQUIRE_THAT(p.norm(), WithinAbs(1.0, 1e-12));
+        REQUIRE_THAT(q.norm(), WithinAbs(1.0, 1e-12));
+        REQUIRE_THAT(dot(p, q), WithinAbs(0.0, 1e-12));
+
+        // p x q is the orbit normal: the direction of the angular momentum
+        // the same elements produce through stateFromElements.
+        const StateVector state = stateFromElements(elements, kGmEarth, elements.epoch);
+        const Vec3 h = cross(state.position, state.velocity).normalized();
+        const Vec3 w = cross(p, q);
+        REQUIRE_THAT(dot(h, w), WithinAbs(1.0, 1e-9));
+    }
+}
+
+TEST_CASE("periapsis lies along p", "[physics][elements]") {
+    // At M = 0 the body is at periapsis, so its position must point along p
+    // with magnitude a(1 - e).
+    for (const auto& [name, elements] : testOrbits()) {
+        INFO(name);
+        OrbitalElements atPeriapsis = elements;
+        atPeriapsis.meanAnomalyAtEpoch = 0.0;
+
+        const auto [p, q] = perifocalBasis(atPeriapsis);
+        const StateVector state =
+            stateFromElements(atPeriapsis, kGmEarth, atPeriapsis.epoch);
+
+        const double rp = periapsisRadius(atPeriapsis);
+        REQUIRE_THAT(dot(state.position, p), WithinRel(rp, 1e-9));
+        REQUIRE_THAT(distance(state.position, p * rp), WithinAbs(0.0, 1e-3));
+    }
+}

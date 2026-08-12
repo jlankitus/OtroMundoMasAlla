@@ -124,6 +124,23 @@ double eccentricAnomalyFromTrue(double trueAnomaly, double eccentricity) noexcep
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+PerifocalBasis perifocalBasis(const OrbitalElements& elements) noexcept {
+    const double cosO = std::cos(elements.longitudeOfAscendingNode);
+    const double sinO = std::sin(elements.longitudeOfAscendingNode);
+    const double cosW = std::cos(elements.argumentOfPeriapsis);
+    const double sinW = std::sin(elements.argumentOfPeriapsis);
+    const double cosI = std::cos(elements.inclination);
+    const double sinI = std::sin(elements.inclination);
+
+    return PerifocalBasis{
+        Vec3{cosO * cosW - sinO * sinW * cosI,
+             sinO * cosW + cosO * sinW * cosI,
+             sinW * sinI},
+        Vec3{-cosO * sinW - sinO * cosW * cosI,
+             -sinO * sinW + cosO * cosW * cosI,
+             cosW * sinI}};
+}
+
 StateVector stateFromElements(const OrbitalElements& elements, double gm, Epoch t) noexcept {
     const double a = elements.semiMajorAxis;
     const double e = elements.eccentricity;
@@ -146,29 +163,9 @@ StateVector stateFromElements(const OrbitalElements& elements, double gm, Epoch 
     const double vxPerifocal = -a * sinE * eDot;
     const double vyPerifocal = a * sqrtOneMinusESq * cosE * eDot;
 
-    // Rotate perifocal -> reference frame by R_z(Omega) R_x(i) R_z(omega),
-    // written out so the trig shared by position and velocity is visible.
-    const double cosO = std::cos(elements.longitudeOfAscendingNode);
-    const double sinO = std::sin(elements.longitudeOfAscendingNode);
-    const double cosW = std::cos(elements.argumentOfPeriapsis);
-    const double sinW = std::sin(elements.argumentOfPeriapsis);
-    const double cosI = std::cos(elements.inclination);
-    const double sinI = std::sin(elements.inclination);
-
-    const double m11 = cosO * cosW - sinO * sinW * cosI;
-    const double m12 = -cosO * sinW - sinO * cosW * cosI;
-    const double m21 = sinO * cosW + cosO * sinW * cosI;
-    const double m22 = -sinO * sinW + cosO * cosW * cosI;
-    const double m31 = sinW * sinI;
-    const double m32 = cosW * sinI;
-
-    return StateVector{
-        Vec3{m11 * xPerifocal + m12 * yPerifocal,
-             m21 * xPerifocal + m22 * yPerifocal,
-             m31 * xPerifocal + m32 * yPerifocal},
-        Vec3{m11 * vxPerifocal + m12 * vyPerifocal,
-             m21 * vxPerifocal + m22 * vyPerifocal,
-             m31 * vxPerifocal + m32 * vyPerifocal}};
+    const auto [p, q] = perifocalBasis(elements);
+    return StateVector{p * xPerifocal + q * yPerifocal,
+                       p * vxPerifocal + q * vyPerifocal};
 }
 
 OrbitalElements elementsFromState(const StateVector& state, double gm, Epoch t) noexcept {
