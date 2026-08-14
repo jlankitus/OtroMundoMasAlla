@@ -49,11 +49,6 @@ using omma::render::ColourDepth;
 
 namespace {
 
-/// Set when something has just been launched and the camera should zoom to
-/// it: a one-shot request from the input handler to the frame loop, not part
-/// of the view's state.
-bool camera_frame_hint = false;
-
 /// Put a satellite in low orbit around whichever body is in view, then follow
 /// and frame it — launching something and having to hunt for it is a bad
 /// first five seconds. Focus on a craft or the Sun falls back to Earth,
@@ -70,7 +65,7 @@ void launchFromFocus(World& world, ViewState& view, int index) {
     if (id.isValid()) {
         view.focusIndex = bodies + world.spacecraft().size() - 1;
         view.panOffset = omma::Vec3::zero();
-        camera_frame_hint = true;
+        view.frameRequested = true;
     }
 }
 
@@ -229,7 +224,7 @@ int runRecording(const Options& options) {
     Canvas canvas{columns, rows};
     Camera camera = makePixelCamera(canvas, options);
     World world = makeWorld(options);
-    omma::StepPacer pacer{std::chrono::seconds{1}, 1'000'000'000'000LL};
+    omma::StepPacer pacer{std::chrono::seconds{1}, kUnboundedStepBudget};
 
     ViewState view{};
     view.paused = options.startPaused;
@@ -260,9 +255,9 @@ int runRecording(const Options& options) {
                 }
             }
         }
-        if (camera_frame_hint) {
+        if (view.frameRequested) {
             camera.frame(kLowOrbitSpan);
-            camera_frame_hint = false;
+            view.frameRequested = false;
         }
 
         pacer.setMaxStepsPerFrame(stepBudgetFor(world));
@@ -348,7 +343,7 @@ int runInteractive(Options& options) {
     }
 
     World world = makeWorld(options);
-    omma::StepPacer pacer{std::chrono::seconds{1}, 1'000'000'000'000LL};
+    omma::StepPacer pacer{std::chrono::seconds{1}, kUnboundedStepBudget};
 
     auto size = con::terminalSize();
     Canvas canvas{size.columns, size.rows};
@@ -371,9 +366,9 @@ int runInteractive(Options& options) {
         while (const int key = con::pollKey()) {
             handleKey(key, view, camera, world);
         }
-        if (camera_frame_hint) {
+        if (view.frameRequested) {
             camera.frame(kLowOrbitSpan);
-            camera_frame_hint = false;
+            view.frameRequested = false;
         }
 
         const auto frameStart = Clock::now();

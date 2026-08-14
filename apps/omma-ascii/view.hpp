@@ -52,6 +52,10 @@ inline constexpr double kLowOrbitSpan = 3.0e7;
 /// simulated time falls behind sooner with more craft, and the HUD says so.
 inline constexpr std::int64_t kIntegrationCraftStepBudget = 6'000;
 
+/// The step cap when nothing is integrated: effectively infinite, because
+/// advancing an all-analytic world is one integer addition regardless of n.
+inline constexpr std::int64_t kUnboundedStepBudget = 1'000'000'000'000LL;
+
 /// Where the milliseconds in a frame went. Press 'f' to see it. Stays in
 /// because "why is this not 30 fps" comes back every time the renderer grows,
 /// and four timestamps settle what speculation cannot.
@@ -73,6 +77,9 @@ struct ViewState {
     bool        showHelp{false};
     bool        showTimings{false};
     bool        running{true};
+    /// One-shot: set on launch, consumed by the frame loop, which zooms the
+    /// camera to the new craft and clears it.
+    bool        frameRequested{false};
     Vec3        panOffset{};
 };
 
@@ -118,7 +125,7 @@ inline Vec3 focusPosition(const World& world, const ViewState& view) {
 inline std::int64_t stepBudgetFor(const World& world) {
     const std::size_t craft = world.spacecraft().size();
     if (craft == 0) {
-        return 1'000'000'000'000LL;
+        return kUnboundedStepBudget;
     }
     return std::max<std::int64_t>(
         1, kIntegrationCraftStepBudget / static_cast<std::int64_t>(craft));

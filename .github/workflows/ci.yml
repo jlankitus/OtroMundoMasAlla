@@ -1,0 +1,48 @@
+# Every push builds with warnings as errors on MSVC and GCC, runs the unit
+# tests, then drives the real binary through both render-QA harnesses. The
+# QA tiers are part of CI on purpose: a renderer that is only checked by
+# whoever happens to look at it rots quietly. See docs/QA.md.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            exe: build/ci/bin/RelWithDebInfo/omma-ascii.exe
+          - os: ubuntu-latest
+            exe: build/ci/bin/omma-ascii
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install QA dependencies
+        run: pip install pillow
+
+      - name: configure
+        run: cmake --preset ci
+
+      - name: build
+        run: cmake --build --preset ci
+
+      - name: unit tests
+        run: ctest --preset ci
+
+      - name: single-frame render QA
+        run: python tools/qa_render.py ${{ matrix.exe }}
+
+      - name: temporal render QA
+        run: python tools/temporal_qa.py ${{ matrix.exe }} --frames 60
