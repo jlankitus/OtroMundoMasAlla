@@ -92,9 +92,15 @@ void handleKey(int key, ViewState& view, Camera& camera, World& world) {
             view.paused = !view.paused; break;
 
         case '=': case '+':
-            if (view.warpIndex + 1 < kWarpLadder.size()) ++view.warpIndex; break;
+            if (view.warpIndex + 1 < kWarpLadder.size()) {
+                ++view.warpIndex;
+            }
+            break;
         case '-': case '_':
-            if (view.warpIndex > 0) --view.warpIndex; break;
+            if (view.warpIndex > 0) {
+                --view.warpIndex;
+            }
+            break;
 
         case ']': camera.zoomBy(1.0 / 1.35); break;
         case '[': camera.zoomBy(1.35); break;
