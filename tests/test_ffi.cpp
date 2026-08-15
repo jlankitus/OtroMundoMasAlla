@@ -7,6 +7,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -128,7 +129,7 @@ TEST_CASE("orbit polylines are finite, closed and on-scale", "[ffi]") {
     OmmaBodyState earth{};
     REQUIRE(omma_body_state(h.sim, 3, &earth) == 1);
     REQUIRE(omma_craft_orbit(h.sim, 0, xyz.data(), kPoints) == kPoints);
-    for (int i = 0; i < kPoints; ++i) {
+    for (std::size_t i = 0; i < static_cast<std::size_t>(kPoints); ++i) {
         const double dx = xyz[i * 3 + 0] - earth.position.x;
         const double dy = xyz[i * 3 + 1] - earth.position.y;
         const double dz = xyz[i * 3 + 2] - earth.position.z;
