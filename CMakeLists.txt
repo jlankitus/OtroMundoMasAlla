@@ -5,6 +5,11 @@ project(OtroMundoMasAlla
     DESCRIPTION "A deterministic solar system and spacecraft simulator"
     LANGUAGES   CXX)
 
+# Any static library here may end up inside the shared C ABI library, and a
+# non-PIC object cannot be linked into a .so. Free on x86-64, so it is on
+# everywhere rather than being a per-target surprise.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Guardrails
 # ─────────────────────────────────────────────────────────────────────────────
