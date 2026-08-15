@@ -29,6 +29,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(omma_tests
     test_console.cpp
+    test_ffi.cpp
     test_epoch.cpp
     test_integrator.cpp
     test_kepler.cpp
@@ -47,6 +48,7 @@ target_link_libraries(omma_tests
         omma::physics
         omma::render
         omma::sim
+        omma::ffi
         omma::compile_options
         Catch2::Catch2WithMain
 )

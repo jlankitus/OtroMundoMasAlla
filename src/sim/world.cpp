@@ -286,4 +286,15 @@ std::vector<SimEvent> World::drainEvents() {
     return drained;
 }
 
+std::int64_t interactiveStepBudget(const World& world) noexcept {
+    // 6000 craft-steps/frame keeps a frame in the low milliseconds; measured
+    // in the terminal client and integrator-bound, not renderer-bound.
+    constexpr std::int64_t kCraftStepsPerFrame = 6'000;
+    const auto fleet = static_cast<std::int64_t>(world.spacecraft().size());
+    if (fleet == 0) {
+        return kUnboundedStepBudget;
+    }
+    return std::max<std::int64_t>(1, kCraftStepsPerFrame / fleet);
+}
+
 }  // namespace omma

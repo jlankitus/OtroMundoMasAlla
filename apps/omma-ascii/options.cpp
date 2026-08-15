@@ -106,7 +106,7 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.startPaused = true;
         } else if (arg == "--scenario") {
             const std::string name = next();
-            if (const auto scenario = scenarioFromName(name)) {
+            if (const auto scenario = omma::scenarioFromName(name)) {
                 out.scenario = *scenario;
             } else {
                 std::fprintf(stderr,

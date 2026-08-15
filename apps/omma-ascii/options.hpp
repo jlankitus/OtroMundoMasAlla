@@ -3,9 +3,8 @@
 // drive them.
 #pragma once
 
-#include "scenarios.hpp"
-
 #include "core/epoch.hpp"
+#include "sim/scenario.hpp"
 #include "render/canvas.hpp"
 
 #include <cstddef>

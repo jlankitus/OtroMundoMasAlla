@@ -155,4 +155,14 @@ private:
     std::uint32_t          nextGeneration_{1};
 };
 
+/// The step cap when nothing is integrated: effectively infinite, because
+/// advancing an all-analytic world is one integer addition regardless of n.
+inline constexpr std::int64_t kUnboundedStepBudget = 1'000'000'000'000LL;
+
+/// Steps per frame an interactive client can afford, in CRAFT-steps divided
+/// by fleet size: a fixed cap holds the frame rate for one craft and
+/// collapses it for twelve. Shared by every real-time client so they all
+/// fall behind honestly, and identically.
+[[nodiscard]] std::int64_t interactiveStepBudget(const World& world) noexcept;
+
 }  // namespace omma

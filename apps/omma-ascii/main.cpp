@@ -20,7 +20,6 @@
 
 #include "draw.hpp"
 #include "options.hpp"
-#include "scenarios.hpp"
 #include "view.hpp"
 
 #include "core/console.hpp"
@@ -178,7 +177,8 @@ std::size_t focusIndexFor(const SolarSystem& system, std::string_view name) {
 /// same starting state the interactive binary shows — the only way its
 /// results mean anything.
 void setUpWorld(World& world, Camera& camera, ViewState& view, const Options& options) {
-    const ScenarioView wanted = applyScenario(world, options.scenario);
+    omma::applyScenario(world, options.scenario);
+    const ScenarioView wanted = scenarioView(options.scenario, world);
 
     for (int i = 0; i < options.preLaunch; ++i) {
         world.launch(makeLaunchRequest(BodyId::Earth, i + 1));
@@ -230,7 +230,7 @@ int runRecording(const Options& options) {
     Canvas canvas{columns, rows};
     Camera camera = makePixelCamera(canvas, options);
     World world = makeWorld(options);
-    omma::StepPacer pacer{std::chrono::seconds{1}, kUnboundedStepBudget};
+    omma::StepPacer pacer{std::chrono::seconds{1}, omma::kUnboundedStepBudget};
 
     ViewState view{};
     view.paused = options.startPaused;
@@ -266,7 +266,7 @@ int runRecording(const Options& options) {
             view.frameRequested = false;
         }
 
-        pacer.setMaxStepsPerFrame(stepBudgetFor(world));
+        pacer.setMaxStepsPerFrame(interactiveStepBudget(world));
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
         world.step(pacer.stepsForFrame(options.frameDeltaSeconds, warp));
 
@@ -349,7 +349,7 @@ int runInteractive(Options& options) {
     }
 
     World world = makeWorld(options);
-    omma::StepPacer pacer{std::chrono::seconds{1}, kUnboundedStepBudget};
+    omma::StepPacer pacer{std::chrono::seconds{1}, omma::kUnboundedStepBudget};
 
     auto size = con::terminalSize();
     Canvas canvas{size.columns, size.rows};
@@ -387,7 +387,7 @@ int runInteractive(Options& options) {
         // The step cap is set every frame: effectively infinite while every
         // body is analytic, dropping to what the RK4 kernel can finish inside
         // a frame the moment something is being integrated.
-        pacer.setMaxStepsPerFrame(stepBudgetFor(world));
+        pacer.setMaxStepsPerFrame(interactiveStepBudget(world));
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
         world.step(pacer.stepsForFrame(realDt, warp));
         const bool clamped = pacer.lastFrameWasClamped();

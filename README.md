@@ -68,7 +68,9 @@ Dependencies point one way and the build system enforces it.
 | `src/physics` | `IEphemeris`, Kepler, `GravityField`, integrators | scheduling, spacecraft |
 | `src/sim` | `World`, spacecraft, launches, burns, events | pixels |
 | `src/render` | half-block canvas, dimetric camera | what it is drawing |
-| `apps/omma-ascii` | game loop, key bindings, scenarios, HUD | physics internals |
+| `src/ffi` | `omma.dll` — the C ABI game engines load | anything C++ across the boundary |
+| `apps/omma-ascii` | game loop, key bindings, HUD | physics internals |
+| `apps/omma-unity` | Unity client: P/Invoke wrapper + 3D view ([setup](apps/omma-unity/README.md)) | sim internals |
 
 A Unity or Unreal front-end, if it ever happens, is one more entry in `apps/`.
 The simulator is the product; the renderer is a client.
@@ -154,7 +156,8 @@ the performance for reproducibility, deliberately.
 - [x] render: half-block truecolour canvas, dimetric camera, HUD
 - [x] sim: world, spacecraft, launch, burns, propellant, collisions
 - [x] scenarios: leo, constellation, transfer — satellites on screen at launch
-- [ ] CI on Windows and Linux
+- [x] CI on Windows and Linux
+- [x] C ABI (`omma.dll`) + Unity client — see [docs/ENGINES.md](docs/ENGINES.md)
 - [ ] perturbations: J2, third-body, drag
 - [ ] constellations: ground tracks, coverage
 - [ ] radio links and link budgets

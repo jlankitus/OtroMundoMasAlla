@@ -6,11 +6,9 @@ add_executable(omma-ascii
     main.cpp
     draw.cpp
     options.cpp
-    scenarios.cpp
     bodies.hpp
     draw.hpp
     options.hpp
-    scenarios.hpp
     view.hpp
 )
 

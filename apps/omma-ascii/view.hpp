@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/vec3.hpp"
+#include "sim/scenario.hpp"
 #include "sim/world.hpp"
 
 #include <algorithm>
@@ -44,17 +45,26 @@ inline constexpr std::array<ZoomPreset, 6> kZoomPresets{{
 /// Framing used when something is launched, matching zoom preset 1.
 inline constexpr double kLowOrbitSpan = 3.0e7;
 
-/// Integration budget in CRAFT-steps per frame, shared across the fleet.
-///
-/// A fixed steps-per-frame cap holds the frame rate for one craft and
-/// collapses it for twelve (measured: 7 fps). Dividing by fleet size keeps a
-/// frame near budget whatever is in orbit; the honest consequence is that
-/// simulated time falls behind sooner with more craft, and the HUD says so.
-inline constexpr std::int64_t kIntegrationCraftStepBudget = 6'000;
+/// What a scenario wants this client's camera and clock to do. Presentation
+/// only — the world-side content lives in omma::applyScenario.
+struct ScenarioView {
+    std::size_t focusIndex{0};
+    double      frameSpan{0.0};      ///< metres across; 0 leaves the camera alone
+    std::size_t warpIndex{5};        ///< a scenario knows its own timescale
+};
 
-/// The step cap when nothing is integrated: effectively infinite, because
-/// advancing an all-analytic world is one integer addition regardless of n.
-inline constexpr std::int64_t kUnboundedStepBudget = 1'000'000'000'000LL;
+/// Focusing the first CRAFT centres the camera on its central body while the
+/// HUD reports the craft — which is what every scenario with spacecraft wants.
+inline ScenarioView scenarioView(Scenario scenario, const World& world) {
+    const std::size_t firstCraft = world.system().size();
+    switch (scenario) {
+        case Scenario::Leo:           return {firstCraft, 3.4e7, 3};  // 1 hour/s
+        case Scenario::Constellation: return {firstCraft, 4.2e7, 2};  // 10 min/s
+        case Scenario::Transfer:      return {firstCraft, 4.5e7, 1};  // 1 min/s
+        case Scenario::Empty:         break;
+    }
+    return {static_cast<std::size_t>(BodyId::Sun), 0.0, 5};           // 1 day/s
+}
 
 /// Where the milliseconds in a frame went. Press 'f' to see it. Stays in
 /// because "why is this not 30 fps" comes back every time the renderer grows,
@@ -117,18 +127,6 @@ inline Vec3 focusPosition(const World& world, const ViewState& view) {
             .position;
     }
     return Vec3::zero();
-}
-
-/// Steps per frame the integrator can afford, given what is in orbit. With no
-/// spacecraft every body is analytic and a step is one integer addition, so
-/// warp is effectively unbounded.
-inline std::int64_t stepBudgetFor(const World& world) {
-    const std::size_t craft = world.spacecraft().size();
-    if (craft == 0) {
-        return kUnboundedStepBudget;
-    }
-    return std::max<std::int64_t>(
-        1, kIntegrationCraftStepBudget / static_cast<std::int64_t>(craft));
 }
 
 }  // namespace omma::app
