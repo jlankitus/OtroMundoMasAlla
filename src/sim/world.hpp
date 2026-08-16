@@ -67,6 +67,8 @@ struct LaunchRequest {
     double propellantKg{50.0};
     double maxThrustNewtons{22.0};
     double exhaustVelocity{2200.0};
+    double dragCoefficient{2.2};
+    double crossSectionM2{1.5};
 };
 
 class World {

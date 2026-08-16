@@ -159,7 +159,7 @@ the performance for reproducibility, deliberately.
 - [x] scenarios: leo, constellation, transfer — satellites on screen at launch
 - [x] CI on Windows and Linux
 - [x] C ABI (`omma.dll`) + Unity client — see [docs/ENGINES.md](docs/ENGINES.md)
-- [x] perturbations: J2 (validated against the secular rates) and third-body; drag still open
+- [x] perturbations: J2, third-body, and atmospheric drag — all validated against closed-form rates
 - [x] ground tracks, horizon footprints, and the `g`-key coverage map
 - [ ] radio links and link budgets
 - [ ] swarm behaviour, intercepts, engagements

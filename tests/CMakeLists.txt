@@ -30,6 +30,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(omma_tests
     test_console.cpp
     test_ffi.cpp
+    test_drag.cpp
     test_epoch.cpp
     test_ground_track.cpp
     test_integrator.cpp

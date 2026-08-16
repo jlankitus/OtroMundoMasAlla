@@ -255,3 +255,24 @@ around an oblate body oscillate by tens of metres over an orbit, so the
 inequality was measuring the wobble, not the burn. The fix asserts the
 physics with real margins — the opposite side falls by hundreds of km — a
 §10 lesson (hard invariants vs sampling tolerances) applying itself.
+
+## 12. Drag, and how far to trust it
+
+A piecewise-exponential fit to the standard atmosphere (Vallado Table 8-4)
+feeds `a = -½ ρ |v_rel| (CdA/m) v_rel`, with the atmosphere co-rotating —
+`v_rel = v - ω×r` — which the rotation model (§11) provides for free. It is
+evaluated at step start and held across the step, the same zero-order hold
+as thrust. Only Earth carries the flag: the density table is Earth-calibrated,
+so Mars stays spherical-vacuum despite having air.
+
+Real thermospheric density varies by a factor of several with solar weather,
+so drag predictions are order-of-magnitude by nature; the model is honest
+about being the static middle of that range. Validation reflects it: the
+decay of a 400 km orbit matches the closed-form secular rate, energy only
+ever decreases, and 1500 km is measurably vacuum. The validation moved OFF
+220 km deliberately — down there the J2 altitude wobble and the mean-versus-
+equatorial radius convention sit in the density exponent and inflate decay
+by tens of percent, which the first version of the test measured (1.67×,
+phase-independent) before the cause was understood. Testing at an altitude
+where the scale height dwarfs those effects validates the drag wiring
+without also testing altitude conventions.

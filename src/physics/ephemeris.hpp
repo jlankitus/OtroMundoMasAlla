@@ -47,6 +47,10 @@ public:
     /// has no rotation model and therefore no ground track.
     [[nodiscard]] virtual double siderealRotationPeriod() const noexcept { return 0.0; }
 
+    /// True when orbits here decay by drag. Only Earth for now: the density
+    /// model is Earth-calibrated, so Mars stays false despite having air.
+    [[nodiscard]] virtual bool hasAtmosphere() const noexcept { return false; }
+
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
 
 protected:

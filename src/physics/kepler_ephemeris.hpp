@@ -88,6 +88,9 @@ public:
         siderealRotationPeriod_ = seconds;
     }
 
+    [[nodiscard]] bool hasAtmosphere() const noexcept override { return hasAtmosphere_; }
+    void setHasAtmosphere(bool value) noexcept { hasAtmosphere_ = value; }
+
     /// GM used to propagate this orbit: parent's GM plus our own.
     [[nodiscard]] double propagationGm() const noexcept { return propagationGm_; }
     [[nodiscard]] const IEphemeris* parent() const noexcept { return parent_; }
@@ -102,6 +105,7 @@ private:
     double            j2_{0.0};
     double            equatorialRadius_{0.0};
     double            siderealRotationPeriod_{0.0};
+    bool              hasAtmosphere_{false};
     KeplerianRow      row_;
     const IEphemeris* parent_;
     double            propagationGm_;

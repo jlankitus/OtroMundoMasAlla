@@ -100,6 +100,14 @@ struct Spacecraft {
     /// mdot = F / ve. Hydrazine ~2200; an ion engine around ten times that.
     double exhaustVelocity{2200.0};
 
+    // ── drag ────────────────────────────────────────────────────────────────
+    /// Drag coefficient. ~2.2 for most satellites, and no one knows theirs to
+    /// better than ~10%, so this default is as good as a measurement.
+    double dragCoefficient{2.2};
+    /// Cross-section presented to the flow, m^2. With the default masses this
+    /// gives a ballistic coefficient m/(Cd A) ~ 85 kg/m^2 — a typical smallsat.
+    double crossSectionM2{1.5};
+
     /// Body the craft's elements are measured against; set from the dominant
     /// gravity source each step, so it follows sphere-of-influence crossings.
     std::size_t centralBodyIndex{0};

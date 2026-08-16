@@ -1,5 +1,8 @@
 #include "sim/world.hpp"
 
+#include "core/units.hpp"
+#include "physics/atmosphere.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -115,6 +118,32 @@ void World::integrateSpacecraft(Spacecraft& craft, double dt) {
         craft.deltaVSpentMps += acceleration * activeSeconds;
     }
 
+    // Drag, where there is an atmosphere to fly through. Zero-order hold like
+    // thrust: evaluated at the step start and held constant across it, which
+    // at LEO speeds and a 1 s step is a ~0.1% smear on a force that is itself
+    // order-of-magnitude by nature.
+    const auto& central = *system_.bodies()[craft.centralBodyIndex];
+    if (central.hasAtmosphere()) {
+        const StateVector local = relativeState(craft);
+        const double density =
+            earthAtmosphericDensity(local.position.norm() - central.meanRadius());
+        if (density > 0.0) {
+            // The atmosphere co-rotates with the body, so drag opposes the
+            // AIR-relative velocity: v_rel = v - omega x r, omega along +z.
+            Vec3 airRelative = local.velocity;
+            if (const double period = central.siderealRotationPeriod(); period > 0.0) {
+                const double omega = constants::kTwoPi / period;
+                airRelative.x += omega * local.position.y;
+                airRelative.y -= omega * local.position.x;
+            }
+            const double speed = airRelative.norm();
+            const double ballistic = craft.dragCoefficient * craft.crossSectionM2
+                                   / craft.totalMassKg();
+            extraAcceleration =
+                extraAcceleration - airRelative * (0.5 * density * speed * ballistic);
+        }
+    }
+
     integrate(integrator_, craft.state, gravity_, stepStart, dt, extraAcceleration);
 }
 
@@ -211,6 +240,8 @@ SpacecraftId World::launch(const LaunchRequest& request) {
     craft.propellantKg = request.propellantKg;
     craft.maxThrustNewtons = request.maxThrustNewtons;
     craft.exhaustVelocity = request.exhaustVelocity;
+    craft.dragCoefficient = request.dragCoefficient;
+    craft.crossSectionM2 = request.crossSectionM2;
     craft.centralBodyIndex = bodyIndex;
     craft.launchEpoch = clock_.now();
     craft.id = SpacecraftId{static_cast<std::uint32_t>(spacecraft_.size()),
