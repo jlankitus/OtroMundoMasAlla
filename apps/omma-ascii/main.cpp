@@ -156,6 +156,7 @@ void handleKey(int key, ViewState& view, Camera& camera, World& world) {
             break;
 
         case 'o': case 'O': view.showOrbits = !view.showOrbits; break;
+        case 'g': case 'G': view.showGroundTrack = !view.showGroundTrack; break;
         case 'l': view.showLabels = !view.showLabels; break;
         case '?': case 'h': case 'H': view.showHelp = !view.showHelp; break;
         case 'f': case 'F': view.showTimings = !view.showTimings; break;
@@ -234,7 +235,9 @@ int runRecording(const Options& options) {
 
     ViewState view{};
     view.paused = options.startPaused;
+    view.showGroundTrack = options.showMap;
     setUpWorld(world, camera, view, options);
+    GroundTrackTrail trail{};
 
     std::error_code error;
     std::filesystem::create_directories(options.recordDir, error);
@@ -269,8 +272,9 @@ int runRecording(const Options& options) {
         pacer.setMaxStepsPerFrame(interactiveStepBudget(world));
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
         world.step(pacer.stepsForFrame(options.frameDeltaSeconds, warp));
+        updateGroundTrackTrail(world, view, trail);
 
-        render(canvas, camera, world, view, reportedFps,
+        render(canvas, camera, world, view, trail, reportedFps,
                pacer.lastFrameWasClamped(), FrameTimings{});
         canvas.present(frame, options.depth, options.blocks, /*homeCursor=*/true);
 
@@ -304,9 +308,12 @@ int runSnapshot(const Options& options) {
     World world = makeWorld(options);
 
     ViewState view{};
+    view.showGroundTrack = options.showMap;
     setUpWorld(world, camera, view, options);
+    GroundTrackTrail trail{};
+    updateGroundTrackTrail(world, view, trail);
 
-    render(canvas, camera, world, view, 30.0, false, FrameTimings{});
+    render(canvas, camera, world, view, trail, 30.0, false, FrameTimings{});
 
     // Colour is honoured as asked even when piped: a snapshot is often
     // captured deliberately, and forcing plain text would make --colour a lie.
@@ -356,7 +363,9 @@ int runInteractive(Options& options) {
     Camera camera = makePixelCamera(canvas, options);
 
     ViewState view{};
+    view.showGroundTrack = options.showMap;
     setUpWorld(world, camera, view, options);
+    GroundTrackTrail trail{};
 
     std::string frameBuffer;
     frameBuffer.reserve(static_cast<std::size_t>(size.columns * size.rows) * 24);
@@ -390,6 +399,7 @@ int runInteractive(Options& options) {
         pacer.setMaxStepsPerFrame(interactiveStepBudget(world));
         const double warp = view.paused ? 0.0 : kWarpLadder[view.warpIndex].factor;
         world.step(pacer.stepsForFrame(realDt, warp));
+        updateGroundTrackTrail(world, view, trail);
         const bool clamped = pacer.lastFrameWasClamped();
 
         // Drained every frame whether or not anyone reads them, so the queue
@@ -405,7 +415,7 @@ int runInteractive(Options& options) {
         }
 
         const auto drawStart = Clock::now();
-        render(canvas, camera, world, view, smoothedFps, clamped, timings);
+        render(canvas, camera, world, view, trail, smoothedFps, clamped, timings);
         const auto presentStart = Clock::now();
         canvas.present(frameBuffer, options.depth, options.blocks, /*homeCursor=*/true);
         const auto writeStart = Clock::now();

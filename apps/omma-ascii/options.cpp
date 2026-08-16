@@ -24,6 +24,7 @@ void printUsage() {
         "  --date YYYY-MM-DD   start epoch\n"
         "  --tilt DEG          camera elevation; 90 is top-down, 30 is dimetric\n"
         "  --spin DEG          camera azimuth\n"
+        "  --map               open with the ground-track map up (also: g key)\n"
         "\n"
         "  --record N          run the live loop headlessly for N frames and\n"
         "                      write each frame's bytes to --record-dir\n"
@@ -104,6 +105,8 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.keys = next();
         } else if (arg == "--paused") {
             out.startPaused = true;
+        } else if (arg == "--map") {
+            out.showMap = true;
         } else if (arg == "--scenario") {
             const std::string name = next();
             if (const auto scenario = omma::scenarioFromName(name)) {

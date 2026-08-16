@@ -11,7 +11,7 @@ namespace omma::app {
 
 /// Compose one full frame into \p canvas, moving the camera to the focus.
 void render(render::Canvas& canvas, render::Camera& camera, const World& world,
-            const ViewState& view, double framesPerSecond, bool clamped,
-            const FrameTimings& timings);
+            const ViewState& view, const GroundTrackTrail& trail,
+            double framesPerSecond, bool clamped, const FrameTimings& timings);
 
 }  // namespace omma::app

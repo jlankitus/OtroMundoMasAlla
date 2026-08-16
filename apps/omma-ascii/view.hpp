@@ -9,8 +9,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace omma::app {
 
@@ -86,11 +88,24 @@ struct ViewState {
     bool        showLabels{true};
     bool        showHelp{false};
     bool        showTimings{false};
+    bool        showGroundTrack{false};
     bool        running{true};
     /// One-shot: set on launch, consumed by the frame loop, which zooms the
     /// camera to the new craft and clears it.
     bool        frameRequested{false};
     Vec3        panOffset{};
+};
+
+/// The focused craft's recent subsatellite points, sampled in SIM time so the
+/// trail is warp-independent and a paused sim leaves it byte-stable. App-side
+/// state: the deterministic core does not remember things for renderers.
+struct GroundTrackTrail {
+    std::vector<LatLon> samples;
+    Epoch               lastSample{};
+    SpacecraftId        craft{SpacecraftId::invalid()};
+
+    static constexpr std::size_t kMaxSamples = 512;
+    static constexpr auto kSampleEvery = std::chrono::seconds{30};
 };
 
 // One focus index over bodies THEN spacecraft, so `tab` walks the whole scene
@@ -127,6 +142,26 @@ inline Vec3 focusPosition(const World& world, const ViewState& view) {
             .position;
     }
     return Vec3::zero();
+}
+
+/// Append the focused craft's current point; reset when the focus changes.
+inline void updateGroundTrackTrail(const World& world, const ViewState& view,
+                                   GroundTrackTrail& trail) {
+    const Spacecraft* craft = focusedCraft(world, view);
+    if (craft == nullptr || !craft->isAlive()) {
+        return;
+    }
+    if (!(trail.craft == craft->id)) {
+        trail.samples.clear();
+        trail.craft = craft->id;
+    } else if (trail.lastSample + GroundTrackTrail::kSampleEvery > world.now()) {
+        return;
+    }
+    trail.samples.push_back(world.groundTrackOf(*craft));
+    trail.lastSample = world.now();
+    if (trail.samples.size() > GroundTrackTrail::kMaxSamples) {
+        trail.samples.erase(trail.samples.begin());
+    }
 }
 
 }  // namespace omma::app

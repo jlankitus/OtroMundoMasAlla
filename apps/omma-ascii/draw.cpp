@@ -297,6 +297,74 @@ void panelRow(Canvas& canvas, int row, const char* label, const std::string& val
     canvas.text(11, row, value, Ink::BrightCyan);
 }
 
+/// The ground-track map: equirectangular, longitude across, latitude down.
+/// A trail in SIM time makes orbital mechanics legible in a way the 3D view
+/// cannot: the sinusoid's height is the inclination, and each pass sits west
+/// of the last because the planet turned underneath.
+void drawGroundTrackMap(Canvas& canvas, const World& world, const ViewState& view,
+                        const GroundTrackTrail& trail) {
+    const Spacecraft* craft = focusedCraft(world, view);
+    if (craft == nullptr) {
+        return;
+    }
+
+    constexpr int kMapWidth = 74;    // interior cells: 360 deg / ~4.9 deg
+    constexpr int kMapHeight = 19;   // 180 deg / ~9.5 deg
+    const int x0 = std::max(0, (canvas.width() - kMapWidth - 2) / 2);
+    const int y0 = std::max(0, (canvas.height() - kMapHeight - 2) / 2);
+
+    canvas.fill(x0, y0, kMapWidth + 2, kMapHeight + 2);
+
+    auto cellOf = [&](const LatLon& point) {
+        const double u = (toDegrees(point.longitudeRadians) + 180.0) / 360.0;
+        const double v = (90.0 - toDegrees(point.latitudeRadians)) / 180.0;
+        return std::pair<int, int>{
+            x0 + 1 + std::clamp(static_cast<int>(u * kMapWidth), 0, kMapWidth - 1),
+            y0 + 1 + std::clamp(static_cast<int>(v * kMapHeight), 0, kMapHeight - 1)};
+    };
+
+    // Border, then a quiet graticule: the equator, and a dot every 30 deg.
+    for (int x = 0; x < kMapWidth + 2; ++x) {
+        canvas.put(x0 + x, y0, '-', inkToRgb(Ink::BrightBlack));
+        canvas.put(x0 + x, y0 + kMapHeight + 1, '-', inkToRgb(Ink::BrightBlack));
+    }
+    for (int y = 0; y < kMapHeight + 2; ++y) {
+        canvas.put(x0, y0 + y, '|', inkToRgb(Ink::BrightBlack));
+        canvas.put(x0 + kMapWidth + 1, y0 + y, '|', inkToRgb(Ink::BrightBlack));
+    }
+    for (int lonDeg = -180; lonDeg <= 180; lonDeg += 30) {
+        for (int latDeg = -60; latDeg <= 60; latDeg += 30) {
+            const auto [cx, cy] = cellOf(LatLon{toRadians(latDeg), toRadians(lonDeg)});
+            canvas.put(cx, cy, '.', inkToRgb(Ink::Black).plus(Rgb{45, 50, 60}));
+        }
+    }
+    const int eqY = cellOf(LatLon{0.0, 0.0}).second;
+    for (int x = 1; x <= kMapWidth; ++x) {
+        if (canvas.glyphAt(x0 + x, eqY) == ' ') {
+            canvas.put(x0 + x, eqY, '-', inkToRgb(Ink::Black).plus(Rgb{45, 50, 60}));
+        }
+    }
+
+    // Trail dim, current point bright — the same subject/scenery rule as the
+    // orbit lines.
+    for (const LatLon& point : trail.samples) {
+        const auto [cx, cy] = cellOf(point);
+        canvas.put(cx, cy, 'o', kCraftOrbit);
+    }
+    const LatLon now = world.groundTrackOf(*craft);
+    const auto [cx, cy] = cellOf(now);
+    canvas.put(cx, cy, '@', kCraftColour);
+
+    char header[96];
+    std::snprintf(header, sizeof(header), " %s ground track  %.1f%c %.1f%c ",
+                  craft->name.c_str(),
+                  std::abs(toDegrees(now.latitudeRadians)),
+                  now.latitudeRadians >= 0.0 ? 'N' : 'S',
+                  std::abs(toDegrees(now.longitudeRadians)),
+                  now.longitudeRadians >= 0.0 ? 'E' : 'W');
+    canvas.text(x0 + 2, y0, header, Ink::BrightWhite);
+}
+
 void drawHud(Canvas& canvas, const World& world, const Camera& camera,
              const ViewState& view, double framesPerSecond, bool clamped,
              const FrameTimings& timings) {
@@ -316,7 +384,6 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
     // letters turn a readout into noise — but only the rows the panel writes.
     canvas.fill(0, 0, canvas.width(), 1);
     canvas.fill(0, h - 2, canvas.width(), 2);
-    canvas.fill(0, 2, 30, craft != nullptr ? 13 : kepler != nullptr ? 12 : 2);
 
     char line[256];
     std::snprintf(line, sizeof(line), " %s   %s ",
@@ -349,6 +416,9 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
     canvas.text(1, h - 1, line, Ink::White);
 
     // ── focus panel ─────────────────────────────────────────────────────────
+    // Suppressed while the ground-track map is up: the map is centred and the
+    // panel would poke through its left edge. (The map header carries the
+    // numbers that matter there.)
     int row = 2;
 
     auto formatted = [](const char* format, double value) {
@@ -357,7 +427,10 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
         return std::string{b};
     };
 
-    if (craft != nullptr) {
+    if (view.showGroundTrack) {
+        // fall through to the overlays
+    } else if (craft != nullptr) {
+        canvas.fill(0, 2, 30, 13);
         canvas.text(1, row++, craft->name, Ink::BrightWhite);
         const auto elements = world.elementsOf(*craft);
         const auto& central = *system.bodies()[craft->centralBodyIndex];
@@ -394,11 +467,9 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
         } else if (!craft->isAlive()) {
             canvas.text(1, row, "  DESTROYED", Ink::BrightRed);
         }
-        return;
-    }
-
-    canvas.text(1, row++, focus.name(), Ink::BrightWhite);
-    if (kepler != nullptr) {
+    } else if (kepler != nullptr) {
+        canvas.fill(0, 2, 30, 12);
+        canvas.text(1, row++, focus.name(), Ink::BrightWhite);
         const auto elements = kepler->elementsAt(t);
         const auto state = kepler->sampleRelativeToParent(t);
 
@@ -417,6 +488,8 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
                  days < 900.0 ? formatted("%.2f d", days)
                               : formatted("%.2f y", days / 365.25));
     } else {
+        canvas.fill(0, 2, 30, 2);
+        canvas.text(1, row++, focus.name(), Ink::BrightWhite);
         canvas.text(1, row++, "  the frame origin", Ink::BrightBlack);
     }
 
@@ -459,6 +532,7 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
             "|  . ,      burn prograde / retrograde        |",
             "|  ' ;      burn normal / anti-normal         |",
             "|  k        cut the engine                    |",
+            "|  g        ground-track map                  |",
             "|  o l      orbit trails / labels             |",
             "|  f        frame timing breakdown            |",
             "|  ?        this panel   q / esc  quit        |",
@@ -477,8 +551,8 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
 }  // namespace
 
 void render(Canvas& canvas, Camera& camera, const World& world,
-            const ViewState& view, double framesPerSecond, bool clamped,
-            const FrameTimings& timings) {
+            const ViewState& view, const GroundTrackTrail& trail,
+            double framesPerSecond, bool clamped, const FrameTimings& timings) {
     canvas.clear();
     // Deep space rather than pure black: a hint of blue reads as sky instead
     // of as a hole, and gives the dimmest orbit line something to sit against.
@@ -490,6 +564,9 @@ void render(Canvas& canvas, Camera& camera, const World& world,
     camera.setCentre(focusPosition(world, view) + view.panOffset);
     drawScene(canvas, camera, world, view);
     drawHud(canvas, world, camera, view, framesPerSecond, clamped, timings);
+    if (view.showGroundTrack) {
+        drawGroundTrackMap(canvas, world, view, trail);
+    }
 }
 
 }  // namespace omma::app

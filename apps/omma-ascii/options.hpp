@@ -28,6 +28,8 @@ struct Options {
     double              elevationDeg{30.0};
     double              azimuthDeg{0.0};
     bool                showHelpAndExit{false};
+    /// Open with the ground-track map up, so the QA harness can reach it.
+    bool                showMap{false};
 
     Scenario            scenario{Scenario::Leo};
     /// Simulated steps before the first frame, so a scenario's EVOLVED state
