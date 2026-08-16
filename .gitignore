@@ -42,3 +42,14 @@ temporal_qa/
 # ── OS ────────────────────────────────────────────────────────
 Thumbs.db
 .DS_Store
+
+# Unity generates these when apps/omma-unity is opened as a project.
+# ProjectSettings/ and Packages/ ARE committed; caches and IDE files are not.
+apps/omma-unity/Library/
+apps/omma-unity/Temp/
+apps/omma-unity/Logs/
+apps/omma-unity/UserSettings/
+apps/omma-unity/obj/
+apps/omma-unity/*.csproj
+apps/omma-unity/*.sln
+apps/omma-unity/Assets/Plugins/x86_64/*.dll
