@@ -150,6 +150,11 @@ struct BodySpec {
     double              radius;
     const KeplerianRow* row;      ///< nullptr for a fixed body
     BodyId              parent;   ///< ignored when row is nullptr
+    /// J2 zonal harmonic and the equatorial radius it is defined against.
+    /// Zero means treated as spherical; only bodies whose oblateness matters
+    /// to an orbiter carry values (IERS/NASA planetary fact sheet figures).
+    double              j2{0.0};
+    double              equatorialRadius{0.0};
 };
 
 // Order matters: a parent must appear before its children so the pointer is
@@ -158,9 +163,11 @@ constexpr std::array<BodySpec, static_cast<std::size_t>(BodyId::Count)> kBodySpe
     {BodyId::Sun,     "Sun",     kGmSun,     kRadiusSun,     nullptr,   BodyId::Sun},
     {BodyId::Mercury, "Mercury", kGmMercury, kRadiusMercury, &kMercury, BodyId::Sun},
     {BodyId::Venus,   "Venus",   kGmVenus,   kRadiusVenus,   &kVenus,   BodyId::Sun},
-    {BodyId::Earth,   "Earth",   kGmEarth,   kRadiusEarth,   &kEarth,   BodyId::Sun},
+    {BodyId::Earth,   "Earth",   kGmEarth,   kRadiusEarth,   &kEarth,   BodyId::Sun,
+                      1.08262668e-3, 6'378'137.0},
     {BodyId::Moon,    "Moon",    kGmMoon,    kRadiusMoon,    &kMoon,    BodyId::Earth},
-    {BodyId::Mars,    "Mars",    kGmMars,    kRadiusMars,    &kMars,    BodyId::Sun},
+    {BodyId::Mars,    "Mars",    kGmMars,    kRadiusMars,    &kMars,    BodyId::Sun,
+                      1.95545e-3, 3'396'190.0},
     {BodyId::Jupiter, "Jupiter", kGmJupiter, kRadiusJupiter, &kJupiter, BodyId::Sun},
     {BodyId::Saturn,  "Saturn",  kGmSaturn,  kRadiusSaturn,  &kSaturn,  BodyId::Sun},
     {BodyId::Uranus,  "Uranus",  kGmUranus,  kRadiusUranus,  &kUranus,  BodyId::Sun},
@@ -191,9 +198,13 @@ SolarSystem SolarSystem::standard() {
 
         const auto parentIndex = static_cast<std::size_t>(spec.parent);
         const IEphemeris* parent = system.bodies_[parentIndex].get();
-        system.bodies_.push_back(std::make_unique<KeplerEphemeris>(
+        auto body = std::make_unique<KeplerEphemeris>(
             spec.name, spec.gm, spec.radius, *spec.row,
-            parent, parent->gravitationalParameter()));
+            parent, parent->gravitationalParameter());
+        if (spec.j2 > 0.0) {
+            body->setOblateness(spec.j2, spec.equatorialRadius);
+        }
+        system.bodies_.push_back(std::move(body));
     }
 
     return system;

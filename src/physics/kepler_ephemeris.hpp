@@ -68,7 +68,18 @@ public:
 
     [[nodiscard]] double gravitationalParameter() const noexcept override { return gm_; }
     [[nodiscard]] double meanRadius() const noexcept override { return meanRadius_; }
+    [[nodiscard]] double j2() const noexcept override { return j2_; }
+    [[nodiscard]] double equatorialRadius() const noexcept override {
+        return equatorialRadius_ > 0.0 ? equatorialRadius_ : meanRadius_;
+    }
     [[nodiscard]] std::string_view name() const noexcept override { return name_; }
+
+    /// Give the body an oblateness. Separate from the constructor because only
+    /// a few bodies have measured J2 worth modelling.
+    void setOblateness(double j2, double equatorialRadius) noexcept {
+        j2_ = j2;
+        equatorialRadius_ = equatorialRadius;
+    }
 
     /// GM used to propagate this orbit: parent's GM plus our own.
     [[nodiscard]] double propagationGm() const noexcept { return propagationGm_; }
@@ -81,6 +92,8 @@ private:
     std::string       name_;
     double            gm_;
     double            meanRadius_;
+    double            j2_{0.0};
+    double            equatorialRadius_{0.0};
     KeplerianRow      row_;
     const IEphemeris* parent_;
     double            propagationGm_;

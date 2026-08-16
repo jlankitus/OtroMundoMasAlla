@@ -11,11 +11,17 @@ GravityField::GravityField(std::vector<const IEphemeris*> sources)
     : bodies_{std::move(sources)} {
     cache_.resize(bodies_.size());
     minimumRadiusSquared_.resize(bodies_.size());
+    j2_.resize(bodies_.size());
+    equatorialRadiusSquared_.resize(bodies_.size());
     for (std::size_t i = 0; i < bodies_.size(); ++i) {
         // Soften at the body's own surface: inside it the point-mass model
         // is wrong regardless, and anything there has crashed (see header).
         const double radius = bodies_[i]->meanRadius();
         minimumRadiusSquared_[i] = radius * radius;
+        // Oblateness is constant per body: gathered once, not per refresh.
+        j2_[i] = bodies_[i]->j2();
+        const double equatorial = bodies_[i]->equatorialRadius();
+        equatorialRadiusSquared_[i] = equatorial * equatorial;
     }
 }
 
@@ -62,6 +68,24 @@ Vec3 GravityField::accelerationAt(const Vec3& position) const noexcept {
         acceleration.x += offset.x * scale;
         acceleration.y += offset.y * scale;
         acceleration.z += offset.z * scale;
+
+        // J2 — the pull of an oblate body. The polar axis is taken along +z of
+        // the reference frame (equator == reference plane); see DESIGN.md §11.
+        // With d the craft's position relative to the body (d = -offset):
+        //     a_J2 = (3/2) J2 GM Req^2 / r^5 * [ dx(5dz^2/r^2 - 1),
+        //                                        dy(5dz^2/r^2 - 1),
+        //                                        dz(5dz^2/r^2 - 3) ]
+        // Stronger pull over the equator, weaker over the poles.
+        if (j2_[i] > 0.0) {
+            const double invR2 = 1.0 / distanceSquared;
+            const double zzOverR2 = offset.z * offset.z * invR2;
+            const double k = 1.5 * j2_[i] * source.gm * equatorialRadiusSquared_[i]
+                           * invR2 * invR2 / distance;
+            const double equatorial = 5.0 * zzOverR2 - 1.0;
+            acceleration.x += k * -offset.x * equatorial;
+            acceleration.y += k * -offset.y * equatorial;
+            acceleration.z += k * -offset.z * (equatorial - 2.0);
+        }
     }
 
     return acceleration;

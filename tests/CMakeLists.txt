@@ -32,6 +32,7 @@ add_executable(omma_tests
     test_ffi.cpp
     test_epoch.cpp
     test_integrator.cpp
+    test_j2.cpp
     test_kepler.cpp
     test_orbital_elements.cpp
     test_render.cpp

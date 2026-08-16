@@ -229,3 +229,29 @@ Kept because each was paid for with a real bug.
 - **Split hard invariants from sampling tolerances.** `minR >= rp` is a law;
   "sampled minimum within 1e-4 of periapsis" measures the sampling grid,
   and conflating them produces tests that fail for innocent reasons.
+
+## 11. J2, and the equator-equals-reference-plane simplification
+
+Earth's equatorial bulge (J2 = 1.08×10⁻³, three orders above every other
+harmonic) torques an orbit like a gyroscope: the plane holds its tilt but the
+node walks — westward for prograde orbits, eastward past 90°. At 98.2°
+inclination the walk is +0.9856°/day, one lap per year: the orbit plane
+tracks the Sun, which is why every imaging satellite flies there and why the
+`leo` scenario's SUN-SYNC satellite is named that. The implementation is a
+per-body `(j2, equatorial radius)` pair flowing into one gated term in
+`GravityField::accelerationAt` (Earth and Mars carry values), validated
+against the closed-form secular rate `Ω̇ = -(3/2) n J2 (Req/p)² cos i`.
+
+The deliberate simplification: **each body's polar axis is taken along the
+reference frame's +z** — the equator coincides with the reference plane.
+Earth's real spin axis tilts 23.4° from the ecliptic normal, so inclinations
+here are ecliptic-relative, not equator-relative. Modelling obliquity means
+per-body axis vectors and belongs with proper equatorial frames; like UTC≈TT
+(§3), the shortcut is documented, contained, and cheap to lift later.
+
+A test lesson J2 taught on arrival: it broke a burn test that asserted
+`apoapsis_after < apoapsis_before` with zero margin. Osculating elements
+around an oblate body oscillate by tens of metres over an orbit, so the
+inequality was measuring the wobble, not the burn. The fix asserts the
+physics with real margins — the opposite side falls by hundreds of km — a
+§10 lesson (hard invariants vs sampling tolerances) applying itself.

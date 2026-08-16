@@ -36,6 +36,13 @@ public:
     /// Mean radius, metres. Used for collision, rendering and horizon checks.
     [[nodiscard]] virtual double meanRadius() const noexcept = 0;
 
+    /// The J2 zonal harmonic — oblateness, dimensionless. Zero (the default)
+    /// means the body is treated as a perfect sphere.
+    [[nodiscard]] virtual double j2() const noexcept { return 0.0; }
+
+    /// Equatorial radius J2 is defined against, metres.
+    [[nodiscard]] virtual double equatorialRadius() const noexcept { return meanRadius(); }
+
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
 
 protected:

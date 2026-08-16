@@ -71,6 +71,8 @@ private:
     std::vector<const IEphemeris*> bodies_;
     std::vector<GravitySource>     cache_;
     std::vector<double>            minimumRadiusSquared_;
+    std::vector<double>            j2_;
+    std::vector<double>            equatorialRadiusSquared_;
     Epoch                          sampledAt_{};
     bool                           refreshed_{false};
 };

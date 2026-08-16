@@ -275,12 +275,19 @@ TEST_CASE("a low-thrust burn is NOT impulsive, and that is realistic",
 TEST_CASE("a retrograde burn lowers the opposite side", "[sim][world][burn]") {
     World world = makeWorld(1s);
     const auto id = world.launch(impulsiveLeo(800.0_km));
-    const double apoBefore = apoapsisRadius(world.elementsOf(*world.find(id)));
+    const auto before = world.elementsOf(*world.find(id));
 
     REQUIRE(world.commandDeltaV(id, ThrustCommand::Frame::Retrograde, 80.0));
     world.step(120);
 
-    REQUIRE(apoapsisRadius(world.elementsOf(*world.find(id))) < apoBefore);
+    const auto after = world.elementsOf(*world.find(id));
+    // The claim is that the OPPOSITE side falls — here by hundreds of km —
+    // while the burn point barely moves. Assert that, with real margins:
+    // J2's short-period wobble shifts the osculating apsides by tens of
+    // metres, and a hair's-width inequality on apoapsis measured the wobble
+    // rather than the burn.
+    REQUIRE(periapsisRadius(after) < periapsisRadius(before) - 100.0_km);
+    REQUIRE_THAT(apoapsisRadius(after), WithinRel(apoapsisRadius(before), 1e-3));
 }
 
 TEST_CASE("a normal burn changes inclination and little else",
