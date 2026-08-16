@@ -16,6 +16,7 @@
 
 #include "core/sim_clock.hpp"
 #include "physics/gravity_field.hpp"
+#include "physics/ground_track.hpp"
 #include "physics/integrator.hpp"
 #include "physics/solar_system.hpp"
 #include "sim/spacecraft.hpp"
@@ -125,6 +126,11 @@ public:
     /// Height above the central body's mean radius, metres. Negative means below
     /// the surface, which means you have already crashed.
     [[nodiscard]] double altitudeOf(const Spacecraft& craft) const noexcept;
+
+    /// Subsatellite point on the craft's central body. Longitude is meaningful
+    /// only for bodies with a rotation model (Earth, Mars); for the rest it is
+    /// the inertial longitude, which still bounds latitude correctly.
+    [[nodiscard]] LatLon groundTrackOf(const Spacecraft& craft) const noexcept;
 
     // ── access ──────────────────────────────────────────────────────────────
 

@@ -288,6 +288,18 @@ int32_t omma_body_orbit(const OmmaSim* sim, int32_t index, double* xyz,
     return sampleEllipse(kepler->elementsAt(t), origin, xyz, count);
 }
 
+int32_t omma_craft_ground_track(const OmmaSim* sim, int32_t index,
+                                double* latitudeRad, double* longitudeRad) {
+    const Spacecraft* craft = craftAt(sim, index);
+    if (craft == nullptr || latitudeRad == nullptr || longitudeRad == nullptr) {
+        return 0;
+    }
+    const LatLon track = sim->world.groundTrackOf(*craft);
+    *latitudeRad = track.latitudeRadians;
+    *longitudeRad = track.longitudeRadians;
+    return 1;
+}
+
 int32_t omma_craft_orbit(const OmmaSim* sim, int32_t index, double* xyz,
                          int32_t count) {
     const Spacecraft* craft = craftAt(sim, index);

@@ -316,7 +316,7 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
     // letters turn a readout into noise — but only the rows the panel writes.
     canvas.fill(0, 0, canvas.width(), 1);
     canvas.fill(0, h - 2, canvas.width(), 2);
-    canvas.fill(0, 2, 30, (kepler != nullptr || craft != nullptr) ? 12 : 2);
+    canvas.fill(0, 2, 30, craft != nullptr ? 13 : kepler != nullptr ? 12 : 2);
 
     char line[256];
     std::snprintf(line, sizeof(line), " %s   %s ",
@@ -378,6 +378,16 @@ void drawHud(Canvas& canvas, const World& world, const Camera& camera,
         panelRow(canvas, row++, "dv left", formatted("%.0f m/s",
                                                      craft->remainingDeltaVMps()));
         panelRow(canvas, row++, "dv used", formatted("%.1f m/s", craft->deltaVSpentMps));
+        {
+            const LatLon track = world.groundTrackOf(*craft);
+            char b[24];
+            std::snprintf(b, sizeof(b), "%.1f%c %.1f%c",
+                          std::abs(toDegrees(track.latitudeRadians)),
+                          track.latitudeRadians >= 0.0 ? 'N' : 'S',
+                          std::abs(toDegrees(track.longitudeRadians)),
+                          track.longitudeRadians >= 0.0 ? 'E' : 'W');
+            panelRow(canvas, row++, "track", std::string{b});
+        }
 
         if (craft->thrust.active) {
             canvas.text(1, row, "  BURNING", Ink::BrightYellow);

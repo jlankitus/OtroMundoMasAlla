@@ -149,6 +149,12 @@ OMMA_API int32_t omma_body_orbit(const OmmaSim* sim, int32_t index,
 OMMA_API int32_t omma_craft_orbit(const OmmaSim* sim, int32_t index,
                                   double* xyz, int32_t count);
 
+/* Subsatellite point on the craft's central body, radians (+N, +E wrapped to
+ * [-pi, pi)). Longitude is body-fixed only for bodies with a rotation model
+ * (Earth, Mars); otherwise it is inertial. Returns 0 on a bad index. */
+OMMA_API int32_t omma_craft_ground_track(const OmmaSim* sim, int32_t index,
+                                         double* latitudeRad, double* longitudeRad);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

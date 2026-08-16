@@ -81,6 +81,13 @@ public:
         equatorialRadius_ = equatorialRadius;
     }
 
+    [[nodiscard]] double siderealRotationPeriod() const noexcept override {
+        return siderealRotationPeriod_;
+    }
+    void setSiderealRotationPeriod(double seconds) noexcept {
+        siderealRotationPeriod_ = seconds;
+    }
+
     /// GM used to propagate this orbit: parent's GM plus our own.
     [[nodiscard]] double propagationGm() const noexcept { return propagationGm_; }
     [[nodiscard]] const IEphemeris* parent() const noexcept { return parent_; }
@@ -94,6 +101,7 @@ private:
     double            meanRadius_;
     double            j2_{0.0};
     double            equatorialRadius_{0.0};
+    double            siderealRotationPeriod_{0.0};
     KeplerianRow      row_;
     const IEphemeris* parent_;
     double            propagationGm_;

@@ -43,6 +43,10 @@ public:
     /// Equatorial radius J2 is defined against, metres.
     [[nodiscard]] virtual double equatorialRadius() const noexcept { return meanRadius(); }
 
+    /// Sidereal rotation period, seconds. Zero (the default) means the body
+    /// has no rotation model and therefore no ground track.
+    [[nodiscard]] virtual double siderealRotationPeriod() const noexcept { return 0.0; }
+
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
 
 protected:

@@ -143,6 +143,13 @@ double World::altitudeOf(const Spacecraft& craft) const noexcept {
     return relativeState(craft).position.norm() - body.meanRadius();
 }
 
+LatLon World::groundTrackOf(const Spacecraft& craft) const noexcept {
+    const auto& body = *system_.bodies()[craft.centralBodyIndex];
+    return subsatellitePoint(
+        relativeState(craft).position,
+        rotationAngleAt(body.siderealRotationPeriod(), clock_.now()));
+}
+
 void World::detectCollisions() {
     // Celestial bodies only, for now; craft-versus-craft needs a spatial index.
     // A position test at end of step, not swept: a fast craft could cross a thin

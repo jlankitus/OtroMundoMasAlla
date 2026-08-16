@@ -150,3 +150,15 @@ TEST_CASE("bodies report parentage for frame-relative rendering", "[ffi]") {
     REQUIRE(omma_body_state(h.sim, 0, &sun) == 1);
     REQUIRE(sun.parentIndex == -1);
 }
+
+TEST_CASE("ground track crosses the ABI", "[ffi]") {
+    SimHandle h{"leo"};
+    double lat = 99.0;
+    double lon = 99.0;
+    REQUIRE(omma_craft_ground_track(h.sim, 0, &lat, &lon) == 1);
+    // ISS-LIKE flies at 51.6 deg: latitude bounded by inclination, longitude
+    // wrapped, both finite.
+    REQUIRE(std::abs(lat) <= 0.91);      // 51.6 deg + margin, radians
+    REQUIRE(std::abs(lon) <= 3.15);
+    REQUIRE(omma_craft_ground_track(h.sim, 42, &lat, &lon) == 0);
+}

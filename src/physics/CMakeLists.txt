@@ -5,6 +5,7 @@
 
 add_library(omma_physics
     gravity_field.cpp
+    ground_track.cpp
     integrator.cpp
     kepler_ephemeris.cpp
     orbital_elements.cpp

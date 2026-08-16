@@ -31,6 +31,7 @@ add_executable(omma_tests
     test_console.cpp
     test_ffi.cpp
     test_epoch.cpp
+    test_ground_track.cpp
     test_integrator.cpp
     test_j2.cpp
     test_kepler.cpp
