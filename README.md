@@ -6,8 +6,11 @@ Real SI units. Real gravity. Planets propagated analytically, spacecraft
 integrated numerically, both behind one interface. Fixed timestep,
 bit-reproducible runs. It renders in your terminal.
 
-> **Status:** `v0.5.0` — opens with satellites already in orbit. Launch more,
-> burn, and watch the predicted orbit deform.
+> **Status:** `v0.6.0` — real perturbations. Sun-synchronous orbits precess
+> like they are named, low orbits decay by drag, planets rotate under their
+> satellites, and `g` shows the ground track with coverage footprints. The
+> sim also compiles to `omma.dll` behind a C ABI, with a Unity client in
+> [apps/omma-unity](apps/omma-unity/README.md).
 
 ```
                                                                                       ....

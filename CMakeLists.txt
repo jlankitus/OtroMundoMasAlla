@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(OtroMundoMasAlla
-    VERSION     0.5.0
+    VERSION     0.6.0
     DESCRIPTION "A deterministic solar system and spacecraft simulator"
     LANGUAGES   CXX)
 
