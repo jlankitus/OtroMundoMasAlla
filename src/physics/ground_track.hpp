@@ -27,4 +27,16 @@ struct LatLon {
 [[nodiscard]] LatLon subsatellitePoint(const Vec3& relativePosition,
                                        double rotationAngle) noexcept;
 
+/// Angular radius of the ground a satellite can see (its horizon footprint),
+/// radians from the subsatellite point: acos(R / r). GEO sees 81 degrees —
+/// almost a hemisphere — which is why three satellites cover the planet.
+[[nodiscard]] double horizonAngularRadius(double bodyRadius,
+                                          double orbitRadius) noexcept;
+
+/// A point on the small circle of angular radius \p angularRadius around
+/// \p centre, at \p azimuth (0 = due north, clockwise). For drawing
+/// footprints on a map.
+[[nodiscard]] LatLon pointOnCircle(const LatLon& centre, double angularRadius,
+                                   double azimuth) noexcept;
+
 }  // namespace omma

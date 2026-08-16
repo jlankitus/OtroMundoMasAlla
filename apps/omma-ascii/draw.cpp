@@ -345,6 +345,28 @@ void drawGroundTrackMap(Canvas& canvas, const World& world, const ViewState& vie
         }
     }
 
+    // Every living craft's horizon footprint, so a constellation's coverage
+    // reads at a glance: the circle is the ground that can see the satellite.
+    const auto& central = *world.system().bodies()[craft->centralBodyIndex];
+    for (const Spacecraft& other : world.spacecraft()) {
+        if (!other.isAlive() || other.centralBodyIndex != craft->centralBodyIndex) {
+            continue;
+        }
+        const double footprint = horizonAngularRadius(
+            central.meanRadius(),
+            world.relativeState(other).position.norm());
+        const LatLon centre = world.groundTrackOf(other);
+        constexpr int kRim = 36;
+        for (int i = 0; i < kRim; ++i) {
+            const auto [fx, fy] = cellOf(pointOnCircle(
+                centre, footprint,
+                constants::kTwoPi * static_cast<double>(i) / kRim));
+            if (canvas.glyphAt(fx, fy) == ' ') {
+                canvas.put(fx, fy, '+', inkToRgb(Ink::Black).plus(Rgb{60, 80, 75}));
+            }
+        }
+    }
+
     // Trail dim, current point bright — the same subject/scenery rule as the
     // orbit lines.
     for (const LatLon& point : trail.samples) {

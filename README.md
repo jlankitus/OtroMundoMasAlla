@@ -117,6 +117,7 @@ point.
 | `.` `,` | burn prograde / retrograde, 10 m/s a press |
 | `'` `;` | burn normal / anti-normal (changes inclination) |
 | `k` | cut the engine |
+| `g` | ground-track map: trail, coverage footprints, lat/lon |
 | `r` `t` `z` `x` | tilt and spin the board; `v` snaps top-down ↔ dimetric |
 | `w a s d` `c` | pan, re-centre |
 | `tab` `p` | next / previous focus target |
@@ -158,8 +159,8 @@ the performance for reproducibility, deliberately.
 - [x] scenarios: leo, constellation, transfer — satellites on screen at launch
 - [x] CI on Windows and Linux
 - [x] C ABI (`omma.dll`) + Unity client — see [docs/ENGINES.md](docs/ENGINES.md)
-- [ ] perturbations: J2, third-body, drag
-- [ ] constellations: ground tracks, coverage
+- [x] perturbations: J2 (validated against the secular rates) and third-body; drag still open
+- [x] ground tracks, horizon footprints, and the `g`-key coverage map
 - [ ] radio links and link budgets
 - [ ] swarm behaviour, intercepts, engagements
 - [ ] Monte Carlo runner, record/replay, 6DOF attitude

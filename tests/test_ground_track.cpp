@@ -118,3 +118,37 @@ TEST_CASE("an inclined track is bounded by its inclination and walks west",
     // orbit's own nodal motion leave a degree or two.
     REQUIRE_THAT(shift, WithinAbs(expected, 2.0));
 }
+
+TEST_CASE("horizon footprints match the numbers everyone quotes",
+          "[physics][groundtrack]") {
+    constexpr double kR = 6.371e6;
+    // GEO sees ~81 degrees of arc -- almost a hemisphere, which is why three
+    // of them cover the planet (minus the poles).
+    REQUIRE_THAT(toDegrees(horizonAngularRadius(kR, 42.164e6)),
+                 WithinAbs(81.3, 0.3));
+    // A 400 km orbit sees ~20 degrees.
+    REQUIRE_THAT(toDegrees(horizonAngularRadius(kR, kR + 400.0e3)),
+                 WithinAbs(19.8, 0.3));
+    // Degenerate inputs are 0, not NaN.
+    REQUIRE(horizonAngularRadius(kR, kR) == 0.0);
+    REQUIRE(horizonAngularRadius(kR, 1.0) == 0.0);
+}
+
+TEST_CASE("footprint circles stay a fixed angular distance from the centre",
+          "[physics][groundtrack]") {
+    const LatLon centre{toRadians(51.6), toRadians(-30.0)};
+    const double radius = toRadians(19.8);
+
+    for (int i = 0; i < 12; ++i) {
+        const double azimuth = toRadians(30.0 * i);
+        const LatLon p = pointOnCircle(centre, radius, azimuth);
+        // Great-circle distance back to the centre via the haversine form.
+        const double dLat = p.latitudeRadians - centre.latitudeRadians;
+        const double dLon = p.longitudeRadians - centre.longitudeRadians;
+        const double a = std::sin(dLat / 2.0) * std::sin(dLat / 2.0)
+                       + std::cos(centre.latitudeRadians) * std::cos(p.latitudeRadians)
+                             * std::sin(dLon / 2.0) * std::sin(dLon / 2.0);
+        const double distance = 2.0 * std::asin(std::sqrt(a));
+        REQUIRE_THAT(distance, WithinAbs(radius, 1e-9));
+    }
+}
