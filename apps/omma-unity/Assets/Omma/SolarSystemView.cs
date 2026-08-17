@@ -30,11 +30,33 @@ namespace Omma
 
         private const int OrbitSamples = 128;
 
-        /// Beyond this many units from the focus, floats and AABBs get shaky
-        /// and everything is sub-pixel anyway: renderers switch off. True
-        /// scale means real space is overwhelmingly empty; the camera frames
-        /// the focused body and the rest of the system waits for tab.
-        private const float MaxRenderUnits = 200000f;
+        /// Beyond this many units from the focus, renderers switch off. Kept
+        /// inside Unity's floating-point comfort zone (the editor warns near
+        /// 100k units), which also means the Sun is culled from Earth focus —
+        /// at true scale it is sub-pixel there anyway. Tab to the Sun to see
+        /// it framed properly.
+        private const float MaxRenderUnits = 40000f;
+
+        /// One colour per body, matched to the terminal palette's hues, so the
+        /// scene view reads at a glance. Orbit lines carry the same colour,
+        /// dimmed.
+        private static readonly Color[] BodyColours =
+        {
+            new Color(1.00f, 0.93f, 0.55f),   // Sun
+            new Color(0.55f, 0.50f, 0.45f),   // Mercury
+            new Color(0.90f, 0.80f, 0.60f),   // Venus
+            new Color(0.25f, 0.50f, 1.00f),   // Earth
+            new Color(0.70f, 0.70f, 0.72f),   // Moon
+            new Color(0.85f, 0.40f, 0.25f),   // Mars
+            new Color(0.80f, 0.65f, 0.45f),   // Jupiter
+            new Color(0.90f, 0.80f, 0.55f),   // Saturn
+            new Color(0.55f, 0.85f, 0.90f),   // Uranus
+            new Color(0.35f, 0.50f, 0.95f),   // Neptune
+            new Color(0.75f, 0.65f, 0.60f),   // Pluto
+        };
+
+        private static Color BodyColour(int index) =>
+            BodyColours[Mathf.Clamp(index, 0, BodyColours.Length - 1)];
 
         private OmmaSim _sim;
         private readonly List<Transform> _bodies = new List<Transform>();
@@ -47,15 +69,25 @@ namespace Omma
         private static bool Finite(Vector3 v) =>
             float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
 
+        /// Last range-verdict per object, so the renderer is only touched when
+        /// OUR verdict changes — toggling a renderer by hand in the Inspector
+        /// must stick, not be re-asserted sixty times a second.
+        private readonly Dictionary<Transform, bool> _rangeVerdict =
+            new Dictionary<Transform, bool>();
+
         /// Assign a position only when it is sane; a hidden renderer beats a
         /// console full of NaN/AABB errors.
-        private static void Place(Transform t, Vector3 position)
+        private void Place(Transform t, Vector3 position)
         {
             var visible = Finite(position) && position.magnitude < MaxRenderUnits;
-            var renderer = t.GetComponent<Renderer>();
-            if (renderer != null && renderer.enabled != visible)
+            if (!_rangeVerdict.TryGetValue(t, out var previous) || previous != visible)
             {
-                renderer.enabled = visible;
+                _rangeVerdict[t] = visible;
+                var renderer = t.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    renderer.enabled = visible;
+                }
             }
             if (visible)
             {
@@ -91,12 +123,43 @@ namespace Omma
                 var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere).transform;
                 sphere.name = _sim.BodyName(i);
                 sphere.SetParent(transform, false);
+
+                var colour = BodyColour(i);
+                var material = sphere.GetComponent<Renderer>().material;
+                material.color = colour;
+                if (i == 0)
+                {
+                    // The Sun is the light source: it should glow, not be lit.
+                    material.EnableKeyword("_EMISSION");
+                    material.SetColor("_EmissionColor", colour * 1.5f);
+                }
+
                 _bodies.Add(sphere);
-                _bodyOrbits.Add(MakeOrbitLine($"{sphere.name} orbit",
-                                              new Color(0.35f, 0.4f, 0.5f)));
+                _bodyOrbits.Add(MakeOrbitLine($"{sphere.name} orbit", colour * 0.55f));
             }
             SyncCraftObjects();
             FrameFocus();
+            LogRoster();
+        }
+
+        /// One line per body at startup: colour, distance from the focus, and
+        /// whether it is inside the render bubble. Verification data for a
+        /// human scanning the console — or a tool reading it over the bridge.
+        private void LogRoster()
+        {
+            var focus = _sim.BodyState(_focusBody).position;
+            var lines = $"omma roster (focus {_sim.BodyName(_focusBody)}, "
+                      + $"1 unit = {_sim.MetresPerUnit / 1000.0:F0} km, "
+                      + $"render bubble {MaxRenderUnits:F0} units)";
+            for (int i = 0; i < _sim.BodyCount; ++i)
+            {
+                var p = _sim.ToUnity(_sim.BodyState(i).position, focus);
+                var c = BodyColour(i);
+                lines += $"\n  {_sim.BodyName(i),-8} rgb({c.r:F2},{c.g:F2},{c.b:F2})"
+                       + $"  {p.magnitude,12:F1} units  "
+                       + (p.magnitude < MaxRenderUnits ? "visible" : "culled (tab to visit)");
+            }
+            Debug.Log(lines);
         }
 
         private void OnDestroy() => _sim?.Dispose();
