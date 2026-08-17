@@ -30,6 +30,12 @@ namespace Omma
 
         private const int OrbitSamples = 128;
 
+        /// Beyond this many units from the focus, floats and AABBs get shaky
+        /// and everything is sub-pixel anyway: renderers switch off. True
+        /// scale means real space is overwhelmingly empty; the camera frames
+        /// the focused body and the rest of the system waits for tab.
+        private const float MaxRenderUnits = 200000f;
+
         private OmmaSim _sim;
         private readonly List<Transform> _bodies = new List<Transform>();
         private readonly List<LineRenderer> _bodyOrbits = new List<LineRenderer>();
@@ -37,6 +43,44 @@ namespace Omma
         private readonly List<LineRenderer> _craftOrbits = new List<LineRenderer>();
         private readonly double[] _orbitBuffer = new double[OrbitSamples * 3];
         private int _focusBody = 3;   // Earth
+
+        private static bool Finite(Vector3 v) =>
+            float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+
+        /// Assign a position only when it is sane; a hidden renderer beats a
+        /// console full of NaN/AABB errors.
+        private static void Place(Transform t, Vector3 position)
+        {
+            var visible = Finite(position) && position.magnitude < MaxRenderUnits;
+            var renderer = t.GetComponent<Renderer>();
+            if (renderer != null && renderer.enabled != visible)
+            {
+                renderer.enabled = visible;
+            }
+            if (visible)
+            {
+                t.localPosition = position;
+            }
+        }
+
+        /// Frame the focused body the way the terminal camera does: distance
+        /// proportional to its radius, so tabbing from Earth to the Moon to
+        /// the Sun always lands somewhere you can see.
+        private void FrameFocus()
+        {
+            var camera = Camera.main;
+            if (camera == null)
+            {
+                return;
+            }
+            var radiusUnits = Mathf.Max(
+                minimumVisualRadius,
+                (float)(_sim.BodyState(_focusBody).radius / metresPerUnit));
+            var distance = Mathf.Max(30f, radiusUnits * 6f);
+            camera.transform.position = new Vector3(0f, distance * 0.55f, -distance);
+            camera.transform.LookAt(Vector3.zero);
+            camera.farClipPlane = Mathf.Max(1000f, distance * 50f);
+        }
 
         private void Start()
         {
@@ -52,6 +96,7 @@ namespace Omma
                                               new Color(0.35f, 0.4f, 0.5f)));
             }
             SyncCraftObjects();
+            FrameFocus();
         }
 
         private void OnDestroy() => _sim?.Dispose();
@@ -68,7 +113,7 @@ namespace Omma
             for (int i = 0; i < _bodies.Count; ++i)
             {
                 var state = _sim.BodyState(i);
-                _bodies[i].localPosition = _sim.ToUnity(state.position, focus);
+                Place(_bodies[i], _sim.ToUnity(state.position, focus));
                 var visual = Mathf.Max(minimumVisualRadius,
                                        (float)(state.radius / metresPerUnit));
                 _bodies[i].localScale = Vector3.one * visual * 2f;
@@ -78,7 +123,7 @@ namespace Omma
             for (int i = 0; i < _craft.Count; ++i)
             {
                 var state = _sim.CraftState(i);
-                _craft[i].localPosition = _sim.ToUnity(state.position, focus);
+                Place(_craft[i], _sim.ToUnity(state.position, focus));
                 DrawOrbit(_craftOrbits[i], _sim.CraftOrbit(i, _orbitBuffer, OrbitSamples), focus);
 
                 var renderer = _craft[i].GetComponent<Renderer>();
@@ -93,7 +138,10 @@ namespace Omma
             if (Input.GetKeyDown(KeyCode.Equals) && warpIndex + 1 < WarpLadder.Length) ++warpIndex;
             if (Input.GetKeyDown(KeyCode.Minus) && warpIndex > 0) --warpIndex;
             if (Input.GetKeyDown(KeyCode.Tab))
+            {
                 _focusBody = (_focusBody + 1) % _sim.BodyCount;
+                FrameFocus();
+            }
 
             if (Input.GetKeyDown(KeyCode.L))
             {
@@ -107,7 +155,10 @@ namespace Omma
                     dryMassKg = 200, propellantKg = 80,
                     maxThrustNewtons = 400, exhaustVelocityMps = 2200,
                 };
-                _sim.Launch(ref request);
+                var id = _sim.Launch(ref request);
+                Debug.Log(id != 0
+                    ? $"launched {request.name} around {_sim.BodyName(request.aroundBodyIndex)}"
+                    : $"launch refused around {_sim.BodyName(request.aroundBodyIndex)}");
             }
 
             if (_sim.CraftCount > 0)
@@ -150,6 +201,19 @@ namespace Omma
 
         private void DrawOrbit(LineRenderer line, int points, OmmaVec3 focus)
         {
+            // An orbit that leaves the render bubble is dropped whole: a
+            // partially-drawn ring lies, and giant coordinates in a
+            // LineRenderer are where the AABB errors come from.
+            for (int i = 0; i < points; ++i)
+            {
+                var p = _sim.ToUnity(_orbitBuffer[i * 3], _orbitBuffer[i * 3 + 1],
+                                     _orbitBuffer[i * 3 + 2], focus);
+                if (!Finite(p) || p.magnitude > MaxRenderUnits)
+                {
+                    line.positionCount = 0;
+                    return;
+                }
+            }
             line.positionCount = points;
             for (int i = 0; i < points; ++i)
             {

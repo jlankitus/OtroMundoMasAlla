@@ -97,20 +97,21 @@ namespace Omma
         /// Sim frame (Z-up, right-handed, metres) -> Unity (Y-up, left-handed,
         /// units), relative to a focus position. Swapping y and z flips the
         /// handedness and puts the ecliptic on Unity's ground plane.
+        ///
+        /// Guarded against a zeroed scale: an Inspector field wiped mid-play
+        /// makes the focus body compute 0/0 and spray NaN transforms.
         public Vector3 ToUnity(OmmaVec3 p, OmmaVec3 focus)
         {
-            return new Vector3(
-                (float)((p.x - focus.x) / MetresPerUnit),
-                (float)((p.z - focus.z) / MetresPerUnit),
-                (float)((p.y - focus.y) / MetresPerUnit));
+            return ToUnity(p.x, p.y, p.z, focus);
         }
 
         public Vector3 ToUnity(double x, double y, double z, OmmaVec3 focus)
         {
+            var scale = MetresPerUnit > 0.0 ? MetresPerUnit : 1e6;
             return new Vector3(
-                (float)((x - focus.x) / MetresPerUnit),
-                (float)((z - focus.z) / MetresPerUnit),
-                (float)((y - focus.y) / MetresPerUnit));
+                (float)((x - focus.x) / scale),
+                (float)((z - focus.z) / scale),
+                (float)((y - focus.y) / scale));
         }
     }
 }
