@@ -1,9 +1,21 @@
-// The whole milestone in one component: drop it on an empty GameObject and
-// press Play. It builds spheres for bodies, dots for spacecraft and line
-// renderers for orbits, then advances the sim with Unity's frame clock —
-// the same pacer-behind-the-boundary shape as the terminal app's loop.
+// The Unity client, whole: local space + scaled-space sky, pad launches with
+// a picture-in-picture launch camera, and Hohmann windows to Mars.
 //
-// Keys: -/= warp   tab focus   L launch   ./, prograde/retrograde burn
+// The rendering architecture is the one real space software uses, in three
+// layers (each defensible on its own):
+//   1. TRUTH is double precision, in the C++ sim, in SI. Unity floats are
+//      only ever a view of it.
+//   2. FLOATING ORIGIN: everything is positioned relative to the focused
+//      body, subtracted in doubles BEFORE narrowing to float. The camera's
+//      subject always sits near (0,0,0) where float precision is thickest.
+//   3. SCALED-SPACE SKY (the KSP/Orbiter trick): bodies too far for float
+//      comfort are drawn on a fixed-radius shell in their TRUE direction at
+//      their TRUE angular size (floored for findability). The near field is
+//      to scale; the far field is a planetarium — honest about what a camera
+//      would actually see, with no giant coordinates anywhere.
+//
+// Keys: -/= warp   tab focus   L (hold!) launch barrage   T Mars window
+//       . , burn newest prograde/retrograde
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -30,16 +42,17 @@ namespace Omma
 
         private const int OrbitSamples = 128;
 
-        /// Beyond this many units from the focus, renderers switch off. Kept
-        /// inside Unity's floating-point comfort zone (the editor warns near
-        /// 100k units), which also means the Sun is culled from Earth focus —
-        /// at true scale it is sub-pixel there anyway. Tab to the Sun to see
-        /// it framed properly.
-        private const float MaxRenderUnits = 40000f;
+        /// Local space ends here; beyond it the sky begins. Inside Unity's
+        /// float comfort zone with room to spare.
+        private const float MaxLocalUnits = 40000f;
+        /// Radius of the scaled-space shell the far field is drawn on.
+        private const float SkyShellUnits = 20000f;
+        /// Minimum apparent radius on the shell: a planetarium exaggeration
+        /// so planets are findable; at true angular size most are sub-pixel,
+        /// exactly like the night sky.
+        private const float MinSkyRadiusUnits = 60f;
 
-        /// One colour per body, matched to the terminal palette's hues, so the
-        /// scene view reads at a glance. Orbit lines carry the same colour,
-        /// dimmed.
+        /// One colour per body, matched to the terminal palette's hues.
         private static readonly Color[] BodyColours =
         {
             new Color(1.00f, 0.93f, 0.55f),   // Sun
@@ -65,54 +78,16 @@ namespace Omma
         private readonly List<LineRenderer> _craftOrbits = new List<LineRenderer>();
         private readonly double[] _orbitBuffer = new double[OrbitSamples * 3];
         private int _focusBody = 3;   // Earth
+        private float _launchCooldown;
+        private int _launchCount;
+
+        private Camera _launchCamera;
+        private RenderTexture _launchFeed;
 
         private static bool Finite(Vector3 v) =>
             float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
 
-        /// Last range-verdict per object, so the renderer is only touched when
-        /// OUR verdict changes — toggling a renderer by hand in the Inspector
-        /// must stick, not be re-asserted sixty times a second.
-        private readonly Dictionary<Transform, bool> _rangeVerdict =
-            new Dictionary<Transform, bool>();
-
-        /// Assign a position only when it is sane; a hidden renderer beats a
-        /// console full of NaN/AABB errors.
-        private void Place(Transform t, Vector3 position)
-        {
-            var visible = Finite(position) && position.magnitude < MaxRenderUnits;
-            if (!_rangeVerdict.TryGetValue(t, out var previous) || previous != visible)
-            {
-                _rangeVerdict[t] = visible;
-                var renderer = t.GetComponent<Renderer>();
-                if (renderer != null)
-                {
-                    renderer.enabled = visible;
-                }
-            }
-            if (visible)
-            {
-                t.localPosition = position;
-            }
-        }
-
-        /// Frame the focused body the way the terminal camera does: distance
-        /// proportional to its radius, so tabbing from Earth to the Moon to
-        /// the Sun always lands somewhere you can see.
-        private void FrameFocus()
-        {
-            var camera = Camera.main;
-            if (camera == null)
-            {
-                return;
-            }
-            var radiusUnits = Mathf.Max(
-                minimumVisualRadius,
-                (float)(_sim.BodyState(_focusBody).radius / metresPerUnit));
-            var distance = Mathf.Max(30f, radiusUnits * 6f);
-            camera.transform.position = new Vector3(0f, distance * 0.55f, -distance);
-            camera.transform.LookAt(Vector3.zero);
-            camera.farClipPlane = Mathf.Max(1000f, distance * 50f);
-        }
+        // ── lifecycle ───────────────────────────────────────────────────────
 
         private void Start()
         {
@@ -129,7 +104,6 @@ namespace Omma
                 material.color = colour;
                 if (i == 0)
                 {
-                    // The Sun is the light source: it should glow, not be lit.
                     material.EnableKeyword("_EMISSION");
                     material.SetColor("_EmissionColor", colour * 1.5f);
                 }
@@ -139,30 +113,27 @@ namespace Omma
             }
             SyncCraftObjects();
             FrameFocus();
+
+            _launchFeed = new RenderTexture(384, 216, 16);
+            _launchCamera = new GameObject("Launch Camera").AddComponent<Camera>();
+            _launchCamera.transform.SetParent(transform, false);
+            _launchCamera.targetTexture = _launchFeed;
+            _launchCamera.nearClipPlane = 0.01f;
+            _launchCamera.enabled = false;
+
             LogRoster();
         }
 
-        /// One line per body at startup: colour, distance from the focus, and
-        /// whether it is inside the render bubble. Verification data for a
-        /// human scanning the console — or a tool reading it over the bridge.
-        private void LogRoster()
+        private void OnDestroy()
         {
-            var focus = _sim.BodyState(_focusBody).position;
-            var lines = $"omma roster (focus {_sim.BodyName(_focusBody)}, "
-                      + $"1 unit = {_sim.MetresPerUnit / 1000.0:F0} km, "
-                      + $"render bubble {MaxRenderUnits:F0} units)";
-            for (int i = 0; i < _sim.BodyCount; ++i)
+            _sim?.Dispose();
+            if (_launchFeed != null)
             {
-                var p = _sim.ToUnity(_sim.BodyState(i).position, focus);
-                var c = BodyColour(i);
-                lines += $"\n  {_sim.BodyName(i),-8} rgb({c.r:F2},{c.g:F2},{c.b:F2})"
-                       + $"  {p.magnitude,12:F1} units  "
-                       + (p.magnitude < MaxRenderUnits ? "visible" : "culled (tab to visit)");
+                _launchFeed.Release();
             }
-            Debug.Log(lines);
         }
 
-        private void OnDestroy() => _sim?.Dispose();
+        // ── per frame ───────────────────────────────────────────────────────
 
         private void Update()
         {
@@ -176,17 +147,14 @@ namespace Omma
             for (int i = 0; i < _bodies.Count; ++i)
             {
                 var state = _sim.BodyState(i);
-                Place(_bodies[i], _sim.ToUnity(state.position, focus));
-                var visual = Mathf.Max(minimumVisualRadius,
-                                       (float)(state.radius / metresPerUnit));
-                _bodies[i].localScale = Vector3.one * visual * 2f;
+                PlaceBody(i, _sim.ToUnity(state.position, focus), state);
                 DrawOrbit(_bodyOrbits[i], _sim.BodyOrbit(i, _orbitBuffer, OrbitSamples), focus);
             }
 
             for (int i = 0; i < _craft.Count; ++i)
             {
                 var state = _sim.CraftState(i);
-                Place(_craft[i], _sim.ToUnity(state.position, focus));
+                PlaceCraft(_craft[i], _sim.ToUnity(state.position, focus));
                 DrawOrbit(_craftOrbits[i], _sim.CraftOrbit(i, _orbitBuffer, OrbitSamples), focus);
 
                 var renderer = _craft[i].GetComponent<Renderer>();
@@ -194,7 +162,61 @@ namespace Omma
                                         : state.burning != 0 ? new Color(1f, 0.7f, 0.3f)
                                                              : new Color(0.4f, 1f, 0.65f);
             }
+
+            UpdateLaunchCamera(focus);
         }
+
+        // ── placement: local space, or the sky ──────────────────────────────
+
+        /// Bodies never lie and never disappear: inside local space they sit
+        /// at their true position at true scale; beyond it they move to the
+        /// scaled-space shell — true direction, true (floored) angular size.
+        private void PlaceBody(int index, Vector3 localPosition, OmmaBodyState state)
+        {
+            var t = _bodies[index];
+            if (!Finite(localPosition))
+            {
+                return;   // keep the last honest value, never write garbage
+            }
+
+            var distance = localPosition.magnitude;
+            if (distance < MaxLocalUnits)
+            {
+                t.localPosition = localPosition;
+                var visual = Mathf.Max(minimumVisualRadius,
+                                       (float)(state.radius / metresPerUnit));
+                t.localScale = Vector3.one * visual * 2f;
+            }
+            else
+            {
+                // The sky: direction is exact; apparent radius is the true
+                // angular size projected onto the shell, floored so the eye
+                // can find it.
+                t.localPosition = localPosition / distance * SkyShellUnits;
+                var angular = (float)(state.radius / metresPerUnit) / distance;
+                var apparent = Mathf.Max(MinSkyRadiusUnits, angular * SkyShellUnits);
+                t.localScale = Vector3.one * apparent * 2f;
+            }
+        }
+
+        /// Craft have no sky mode — a satellite around another planet is
+        /// genuinely invisible from here. Hidden, at its true position.
+        private void PlaceCraft(Transform t, Vector3 localPosition)
+        {
+            if (!Finite(localPosition))
+            {
+                return;
+            }
+            t.localPosition = localPosition;
+            var visible = localPosition.magnitude < MaxLocalUnits;
+            var renderer = t.GetComponent<Renderer>();
+            if (renderer.enabled != visible)
+            {
+                renderer.enabled = visible;
+            }
+        }
+
+        // ── input ───────────────────────────────────────────────────────────
 
         private void HandleKeys()
         {
@@ -206,22 +228,52 @@ namespace Omma
                 FrameFocus();
             }
 
-            if (Input.GetKeyDown(KeyCode.L))
+            // HOLD L for a barrage: five pads a second, spread in longitude
+            // around the planet so the fleet fans out instead of stacking.
+            // Every launch is Earth-based and starts ON THE PAD — watch the
+            // picture-in-picture feed fly the gravity turn.
+            _launchCooldown -= Time.deltaTime;
+            if (Input.GetKey(KeyCode.L) && _launchCooldown <= 0f)
             {
-                var request = new OmmaLaunchRequest
+                _launchCooldown = 0.2f;
+                ++_launchCount;
+                var request = new OmmaSurfaceLaunchRequest
                 {
-                    name = $"U-{_sim.CraftCount + 1}",
-                    aroundBodyIndex = _focusBody == 0 ? 3 : _focusBody,
-                    altitudeMetres = 400e3,
-                    inclinationRad = 0.9,
-                    meanAnomalyRad = 0.6 * _sim.CraftCount,
-                    dryMassKg = 200, propellantKg = 80,
-                    maxThrustNewtons = 400, exhaustVelocityMps = 2200,
+                    name = $"U-{_launchCount}",
+                    bodyIndex = 3,
+                    latitudeRad = 0.4974,                       // the Cape
+                    longitudeRad = -1.4075 + 0.35 * (_launchCount % 18),
+                    targetAltitudeMetres = 200e3 + 15e3 * (_launchCount % 8),
+                    azimuthRad = 1.5708,
                 };
-                var id = _sim.Launch(ref request);
-                Debug.Log(id != 0
-                    ? $"launched {request.name} around {_sim.BodyName(request.aroundBodyIndex)}"
-                    : $"launch refused around {_sim.BodyName(request.aroundBodyIndex)}");
+                var id = _sim.LaunchAscent(ref request);
+                Debug.Log(id != 0 ? $"pad launch {request.name}" : "launch refused");
+            }
+
+            // T: the next Mars window for the newest craft, and the injection
+            // burn commanded NOW. Honest label: burn at the window (warp to
+            // it first) for a real intercept; burn today and you get the
+            // right-sized ellipse pointed the wrong way — which is itself a
+            // lesson in why windows exist.
+            if (Input.GetKeyDown(KeyCode.T) && _sim.CraftCount > 0)
+            {
+                if (_sim.PlanTransfer(3, 5, 6.771e6, out var plan))
+                {
+                    Debug.Log($"MARS WINDOW: opens in {plan.waitSeconds / 86400.0:F0} days, "
+                            + $"transit {plan.transferSeconds / 86400.0:F0} days, "
+                            + $"injection dv {plan.departureDeltaVMps:F0} m/s, "
+                            + $"phase now {plan.currentPhaseAngleDeg:F1} deg "
+                            + $"(need {plan.phaseAngleDeg:F1})");
+                    var id = _sim.CraftId(_sim.CraftCount - 1);
+                    if (_sim.CommandDeltaV(id, BurnFrame.Prograde, plan.departureDeltaVMps))
+                    {
+                        Debug.Log("injection burn commanded (prograde, now)");
+                    }
+                    else
+                    {
+                        Debug.Log("newest craft cannot afford the injection burn");
+                    }
+                }
             }
 
             if (_sim.CraftCount > 0)
@@ -233,6 +285,64 @@ namespace Omma
                     _sim.CommandDeltaV(id, BurnFrame.Retrograde, 10.0);
             }
         }
+
+        // ── cameras ─────────────────────────────────────────────────────────
+
+        /// Frame the focused body by its radius, with the near/far planes set
+        /// from the same distance — a 700,000:1 depth ratio z-fights.
+        private void FrameFocus()
+        {
+            var camera = Camera.main;
+            if (camera == null)
+            {
+                return;
+            }
+            var radiusUnits = Mathf.Max(
+                minimumVisualRadius,
+                (float)(_sim.BodyState(_focusBody).radius / metresPerUnit));
+            var distance = Mathf.Max(30f, radiusUnits * 6f);
+            camera.transform.position = new Vector3(0f, distance * 0.55f, -distance);
+            camera.transform.LookAt(Vector3.zero);
+            camera.nearClipPlane = Mathf.Max(0.05f, distance / 2000f);
+            camera.farClipPlane = Mathf.Max(SkyShellUnits * 3f, distance * 50f);
+        }
+
+        /// The picture-in-picture launch feed: chase the newest ASCENDING
+        /// craft while any exists; otherwise the feed is off.
+        private void UpdateLaunchCamera(OmmaVec3 focus)
+        {
+            int ascending = -1;
+            for (int i = _craft.Count - 1; i >= 0; --i)
+            {
+                var phase = _sim.AscentPhaseOf(i);
+                if (phase >= AscentPhase.Vertical && phase <= AscentPhase.Circularize)
+                {
+                    ascending = i;
+                    break;
+                }
+            }
+            if (ascending < 0)
+            {
+                _launchCamera.enabled = false;
+                return;
+            }
+
+            var craftPos = _sim.ToUnity(_sim.CraftState(ascending).position, focus);
+            if (!Finite(craftPos) || craftPos.magnitude > MaxLocalUnits)
+            {
+                _launchCamera.enabled = false;
+                return;
+            }
+            // Over the shoulder of the planet: sit slightly outward from the
+            // craft (away from the focus body's centre) and look back at it.
+            var outward = craftPos.magnitude > 0.001f ? craftPos.normalized : Vector3.up;
+            _launchCamera.transform.position =
+                craftPos + outward * 1.5f + Vector3.up * 0.4f;
+            _launchCamera.transform.LookAt(craftPos, outward);
+            _launchCamera.enabled = true;
+        }
+
+        // ── plumbing ────────────────────────────────────────────────────────
 
         private void SyncCraftObjects()
         {
@@ -264,14 +374,14 @@ namespace Omma
 
         private void DrawOrbit(LineRenderer line, int points, OmmaVec3 focus)
         {
-            // An orbit that leaves the render bubble is dropped whole: a
-            // partially-drawn ring lies, and giant coordinates in a
-            // LineRenderer are where the AABB errors come from.
+            // An orbit that leaves local space is dropped whole: a partially
+            // drawn ring lies, and giant LineRenderer coordinates are where
+            // the AABB errors came from.
             for (int i = 0; i < points; ++i)
             {
                 var p = _sim.ToUnity(_orbitBuffer[i * 3], _orbitBuffer[i * 3 + 1],
                                      _orbitBuffer[i * 3 + 2], focus);
-                if (!Finite(p) || p.magnitude > MaxRenderUnits)
+                if (!Finite(p) || p.magnitude > MaxLocalUnits)
                 {
                     line.positionCount = 0;
                     return;
@@ -286,25 +396,63 @@ namespace Omma
             }
         }
 
+        /// One line per body at startup: colour, distance, local or sky.
+        /// Verification data for a human scanning the console — or a tool
+        /// reading it over the editor bridge.
+        private void LogRoster()
+        {
+            var focus = _sim.BodyState(_focusBody).position;
+            var lines = $"omma roster (focus {_sim.BodyName(_focusBody)}, "
+                      + $"1 unit = {_sim.MetresPerUnit / 1000.0:F0} km, "
+                      + $"local space {MaxLocalUnits:F0} units, sky shell {SkyShellUnits:F0})";
+            for (int i = 0; i < _sim.BodyCount; ++i)
+            {
+                var p = _sim.ToUnity(_sim.BodyState(i).position, focus);
+                var c = BodyColour(i);
+                lines += $"\n  {_sim.BodyName(i),-8} rgb({c.r:F2},{c.g:F2},{c.b:F2})"
+                       + $"  {p.magnitude,12:F1} units  "
+                       + (p.magnitude < MaxLocalUnits ? "local" : "sky");
+            }
+            Debug.Log(lines);
+        }
+
+        // ── HUD ─────────────────────────────────────────────────────────────
+
         private void OnGUI()
         {
             var status = $"warp {WarpLabels[warpIndex]}   focus {_sim.BodyName(_focusBody)}"
                        + $"   craft {_sim.CraftCount}"
                        + (_sim.FallingBehind ? "   [falling behind]" : "");
             GUI.Label(new Rect(12, 8, 900, 24), status);
+
             if (_sim.CraftCount > 0)
             {
-                var e = _sim.CraftElements(_sim.CraftCount - 1);
-                var s = _sim.CraftState(_sim.CraftCount - 1);
+                int newest = _sim.CraftCount - 1;
+                var e = _sim.CraftElements(newest);
+                var s = _sim.CraftState(newest);
+                var phase = _sim.AscentPhaseOf(newest);
                 var earthRadius = _sim.BodyState(3).radius;
+                var phaseText = phase != AscentPhase.None && phase != AscentPhase.Done
+                    ? $"  ASCENT: {phase}" : "";
                 GUI.Label(new Rect(12, 30, 900, 24),
-                    $"{_sim.CraftName(_sim.CraftCount - 1)}: "
+                    $"{_sim.CraftName(newest)}: "
                     + $"peri {(e.periapsisRadius - earthRadius) / 1000:F0} km  "
                     + $"apo {(e.apoapsisRadius - earthRadius) / 1000:F0} km  "
-                    + $"dv used {s.deltaVSpentMps:F1} m/s  dv left {s.deltaVLeftMps:F0} m/s");
+                    + $"dv left {s.deltaVLeftMps:F0} m/s{phaseText}");
             }
             GUI.Label(new Rect(12, 52, 900, 24),
-                      "-/=  warp    tab  focus    L  launch    . ,  burn");
+                      "-/=  warp    tab  focus    L (hold)  launch barrage    "
+                      + "T  Mars window    . ,  burn");
+
+            if (_launchCamera != null && _launchCamera.enabled)
+            {
+                var w = 384f;
+                var h = 216f;
+                var x = Screen.width - w - 12f;
+                var y = Screen.height - h - 12f;
+                GUI.DrawTexture(new Rect(x, y, w, h), _launchFeed, ScaleMode.StretchToFill);
+                GUI.Box(new Rect(x, y - 22f, w, 22f), "LAUNCH CAM");
+            }
         }
     }
 }

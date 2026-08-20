@@ -66,6 +66,43 @@ namespace Omma
         public double exhaustVelocityMps;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct OmmaSurfaceLaunchRequest
+    {
+        [MarshalAs(UnmanagedType.LPStr)] public string name;
+        public int bodyIndex;
+        public double latitudeRad;
+        public double longitudeRad;
+        public double targetAltitudeMetres;
+        public double azimuthRad;
+        public double dryMassKg;
+        public double propellantKg;
+        public double maxThrustNewtons;
+        public double exhaustVelocityMps;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct OmmaTransferPlan
+    {
+        public int valid;
+        public double waitSeconds;
+        public double transferSeconds;
+        public double phaseAngleDeg;
+        public double currentPhaseAngleDeg;
+        public double vInfinityMps;
+        public double departureDeltaVMps;
+    }
+
+    public enum AscentPhase
+    {
+        None = 0,
+        Vertical = 1,
+        PitchOver = 2,
+        Coast = 3,
+        Circularize = 4,
+        Done = 5,
+    }
+
     public enum BurnFrame
     {
         Prograde = 0,
@@ -106,6 +143,13 @@ namespace Omma
 
         [DllImport(Dll)] internal static extern long omma_launch(
             IntPtr sim, ref OmmaLaunchRequest request);
+        [DllImport(Dll)] internal static extern long omma_launch_ascent(
+            IntPtr sim, ref OmmaSurfaceLaunchRequest request);
+        [DllImport(Dll)] internal static extern int omma_craft_ascent_phase(
+            IntPtr sim, int index);
+        [DllImport(Dll)] internal static extern int omma_plan_transfer(
+            IntPtr sim, int fromBody, int toBody, double parkingRadiusMetres,
+            out OmmaTransferPlan plan);
         [DllImport(Dll)] internal static extern long omma_craft_id(IntPtr sim, int index);
         [DllImport(Dll)] internal static extern int omma_command_delta_v(
             IntPtr sim, long craftId, int frame, double deltaVMps);

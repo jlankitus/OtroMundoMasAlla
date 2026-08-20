@@ -81,6 +81,17 @@ namespace Omma
         public long Launch(ref OmmaLaunchRequest request) =>
             OmmaNative.omma_launch(_sim, ref request);
 
+        public long LaunchAscent(ref OmmaSurfaceLaunchRequest request) =>
+            OmmaNative.omma_launch_ascent(_sim, ref request);
+
+        public AscentPhase AscentPhaseOf(int index) =>
+            (AscentPhase)OmmaNative.omma_craft_ascent_phase(_sim, index);
+
+        public bool PlanTransfer(int fromBody, int toBody, double parkingRadius,
+                                 out OmmaTransferPlan plan) =>
+            OmmaNative.omma_plan_transfer(_sim, fromBody, toBody, parkingRadius,
+                                          out plan) != 0;
+
         public long CraftId(int index) => OmmaNative.omma_craft_id(_sim, index);
 
         public bool CommandDeltaV(long craftId, BurnFrame frame, double deltaVMps) =>
