@@ -7,6 +7,7 @@ add_library(omma_sim
     ascent.cpp
     scenario.cpp
     spacecraft.cpp
+    transfer.cpp
     world.cpp
 )
 add_library(omma::sim ALIAS omma_sim)

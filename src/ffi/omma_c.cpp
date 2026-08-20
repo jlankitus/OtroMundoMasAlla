@@ -11,6 +11,7 @@
 #include "physics/orbital_elements.hpp"
 #include "physics/solar_system.hpp"
 #include "sim/scenario.hpp"
+#include "sim/transfer.hpp"
 #include "sim/world.hpp"
 
 #include <chrono>
@@ -244,6 +245,64 @@ int64_t omma_launch(OmmaSim* sim, const OmmaLaunchRequest* request) {
     launch.maxThrustNewtons = request->maxThrustNewtons;
     launch.exhaustVelocity = request->exhaustVelocityMps;
     return packId(sim->world.launch(launch));
+}
+
+int64_t omma_launch_ascent(OmmaSim* sim, const OmmaSurfaceLaunchRequest* request) {
+    if (sim == nullptr) {
+        return 0;
+    }
+    SurfaceLaunchRequest launch{};   // the default rocket
+    int32_t bodyIndex = 3;           // Earth
+    const char* name = "ASCENT";
+    if (request != nullptr) {
+        bodyIndex = request->bodyIndex;
+        if (request->name != nullptr) name = request->name;
+        launch.latitudeRadians = request->latitudeRad;
+        launch.longitudeRadians = request->longitudeRad;
+        if (request->targetAltitudeMetres > 0.0)
+            launch.targetAltitudeMetres = request->targetAltitudeMetres;
+        launch.azimuthRadians = request->azimuthRad;
+        if (request->dryMassKg > 0.0) launch.dryMassKg = request->dryMassKg;
+        if (request->propellantKg > 0.0) launch.propellantKg = request->propellantKg;
+        if (request->maxThrustNewtons > 0.0)
+            launch.maxThrustNewtons = request->maxThrustNewtons;
+        if (request->exhaustVelocityMps > 0.0)
+            launch.exhaustVelocityMps = request->exhaustVelocityMps;
+    }
+    if (bodyIndex < 0
+        || static_cast<std::size_t>(bodyIndex) >= sim->world.system().size()) {
+        return 0;
+    }
+    return packId(sim->world.launchFromSurface(static_cast<BodyId>(bodyIndex),
+                                               launch, name));
+}
+
+int32_t omma_craft_ascent_phase(const OmmaSim* sim, int32_t index) {
+    const Spacecraft* craft = craftAt(sim, index);
+    if (craft == nullptr) {
+        return -1;
+    }
+    return static_cast<int32_t>(craft->ascent.phase);
+}
+
+int32_t omma_plan_transfer(const OmmaSim* sim, int32_t fromBody, int32_t toBody,
+                           double parkingRadiusMetres, OmmaTransferPlan* out) {
+    if (sim == nullptr || out == nullptr || fromBody < 0 || toBody < 0
+        || static_cast<std::size_t>(fromBody) >= sim->world.system().size()
+        || static_cast<std::size_t>(toBody) >= sim->world.system().size()) {
+        return 0;
+    }
+    const TransferPlan plan = planHohmannTransfer(
+        sim->world.system(), static_cast<BodyId>(fromBody),
+        static_cast<BodyId>(toBody), sim->world.now(), parkingRadiusMetres);
+    out->valid = plan.valid ? 1 : 0;
+    out->waitSeconds = plan.waitSeconds;
+    out->transferSeconds = plan.transferSeconds;
+    out->phaseAngleDeg = plan.phaseAngleDeg;
+    out->currentPhaseAngleDeg = plan.currentPhaseAngleDeg;
+    out->vInfinityMps = plan.vInfinityMps;
+    out->departureDeltaVMps = plan.departureDeltaVMps;
+    return out->valid;
 }
 
 int64_t omma_craft_id(const OmmaSim* sim, int32_t index) {

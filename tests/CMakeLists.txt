@@ -41,6 +41,7 @@ add_executable(omma_tests
     test_render.cpp
     test_sim_clock.cpp
     test_solar_system.cpp
+    test_transfer.cpp
     test_vec3.cpp
     test_world.cpp
     test_version.cpp

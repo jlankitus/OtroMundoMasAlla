@@ -162,3 +162,37 @@ TEST_CASE("ground track crosses the ABI", "[ffi]") {
     REQUIRE(std::abs(lon) <= 3.15);
     REQUIRE(omma_craft_ground_track(h.sim, 42, &lat, &lon) == 0);
 }
+
+TEST_CASE("a pad launch crosses the ABI and flies to orbit", "[ffi]") {
+    SimHandle h{"empty"};
+
+    // NULL request: the default rocket, Canaveral, due east, 200 km.
+    const std::int64_t id = omma_launch_ascent(h.sim, nullptr);
+    REQUIRE(id != 0);
+    REQUIRE(omma_craft_ascent_phase(h.sim, 0) == 1);   // vertical, on the pad
+
+    omma_step(h.sim, 1'800);   // half an hour: through MECO and coast
+    const int32_t midPhase = omma_craft_ascent_phase(h.sim, 0);
+    REQUIRE(midPhase >= 3);    // coast or beyond
+
+    omma_step(h.sim, 1'800);   // and the circularization
+    REQUIRE(omma_craft_ascent_phase(h.sim, 0) == 5);   // done
+
+    OmmaElements elements{};
+    REQUIRE(omma_craft_elements(h.sim, 0, &elements) == 1);
+    REQUIRE(elements.periapsisRadius - 6.371e6 > 150.0e3);
+    REQUIRE(elements.eccentricity < 0.02);
+}
+
+TEST_CASE("the Mars window crosses the ABI", "[ffi]") {
+    SimHandle h{"empty"};
+    OmmaTransferPlan plan{};
+    REQUIRE(omma_plan_transfer(h.sim, 3, 5, 6.771e6, &plan) == 1);   // Earth->Mars
+    REQUIRE(plan.valid == 1);
+    REQUIRE(plan.transferSeconds > 200.0 * 86'400.0);
+    REQUIRE(plan.departureDeltaVMps > 3'000.0);
+    REQUIRE(plan.departureDeltaVMps < 4'200.0);
+    // Degenerates refuse politely.
+    REQUIRE(omma_plan_transfer(h.sim, 3, 3, 6.771e6, &plan) == 0);
+    REQUIRE(omma_plan_transfer(h.sim, 3, 99, 6.771e6, &plan) == 0);
+}

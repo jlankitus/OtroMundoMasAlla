@@ -130,6 +130,46 @@ OMMA_API int32_t omma_craft_elements(const OmmaSim* sim, int32_t index, OmmaElem
 
 /* Returns a craft id (> 0), or 0 if the requested orbit is impossible. */
 OMMA_API int64_t omma_launch(OmmaSim* sim, const OmmaLaunchRequest* request);
+
+/* A launch that starts ON THE PAD: at rest on the rotating surface, flown to
+ * orbit by the ascent autopilot through the same physics as everything else.
+ * Fields <= 0 fall back to the sim's rocket defaults; a NULL request means
+ * "the default rocket from Canaveral, due east, 200 km". */
+typedef struct OmmaSurfaceLaunchRequest {
+    const char* name;              /* NULL -> "ASCENT" */
+    int32_t bodyIndex;             /* body to launch from (3 = Earth) */
+    double  latitudeRad;
+    double  longitudeRad;
+    double  targetAltitudeMetres;
+    double  azimuthRad;            /* pi/2 = due east */
+    double  dryMassKg;
+    double  propellantKg;
+    double  maxThrustNewtons;
+    double  exhaustVelocityMps;
+} OmmaSurfaceLaunchRequest;
+
+OMMA_API int64_t omma_launch_ascent(OmmaSim* sim,
+                                    const OmmaSurfaceLaunchRequest* request);
+
+/* Ascent autopilot phase for a fleet index: 0 none/orbital, 1 vertical,
+ * 2 pitch-over, 3 coast, 4 circularize, 5 done. -1 on a bad index. */
+OMMA_API int32_t omma_craft_ascent_phase(const OmmaSim* sim, int32_t index);
+
+/* Hohmann window from one body to another as of now. See sim/transfer.hpp
+ * for the model and its honesty bounds. */
+typedef struct OmmaTransferPlan {
+    int32_t valid;
+    double  waitSeconds;
+    double  transferSeconds;
+    double  phaseAngleDeg;
+    double  currentPhaseAngleDeg;
+    double  vInfinityMps;
+    double  departureDeltaVMps;    /* injection burn from the parking orbit */
+} OmmaTransferPlan;
+
+OMMA_API int32_t omma_plan_transfer(const OmmaSim* sim, int32_t fromBody,
+                                    int32_t toBody, double parkingRadiusMetres,
+                                    OmmaTransferPlan* out);
 /* Craft id for a fleet index, 0 on a bad index. Ids stay valid across steps. */
 OMMA_API int64_t omma_craft_id(const OmmaSim* sim, int32_t index);
 /* Returns 1 if the burn was accepted (refused when unaffordable or dead). */
