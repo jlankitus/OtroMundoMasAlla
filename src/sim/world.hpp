@@ -97,6 +97,13 @@ public:
     /// orbit is impossible (below the surface, or eccentricity >= 1).
     SpacecraftId launch(const LaunchRequest& request);
 
+    /// Put a spacecraft ON THE PAD: at rest on the rotating surface of \p body
+    /// with the ascent autopilot armed. Unlike launch(), nothing is inserted
+    /// anywhere — the vehicle has to fly there, through the same gravity, drag
+    /// and thrust every other craft experiences.
+    SpacecraftId launchFromSurface(BodyId body, const SurfaceLaunchRequest& request,
+                                   std::string name = "ASCENT");
+
     /// Command a burn. Duration rather than delta-v: a thruster has a valve and a
     /// clock, and the delta-v is what comes out.
     bool commandBurn(SpacecraftId id, ThrustCommand::Frame frame,

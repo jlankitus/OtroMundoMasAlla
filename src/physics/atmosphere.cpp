@@ -16,6 +16,20 @@ struct Band {
 };
 
 constexpr Band kBands[] = {
+    // The lower atmosphere exists because rockets launch through it. The
+    // first version started at 100 km — fine for every satellite, and wrong
+    // by 10x at sea level the moment the first ascent flew (the 100 km band's
+    // thermosphere scale height, extrapolated down, gives 12.9 kg/m^3 at the
+    // pad; the real number is 1.225).
+    {0.0,   1.225,     7.249},
+    {25.0,  3.899e-2,  6.349},
+    {30.0,  1.774e-2,  6.682},
+    {40.0,  3.972e-3,  7.554},
+    {50.0,  1.057e-3,  8.382},
+    {60.0,  3.206e-4,  7.714},
+    {70.0,  8.770e-5,  6.549},
+    {80.0,  1.905e-5,  5.799},
+    {90.0,  3.396e-6,  5.382},
     {100.0, 5.297e-7,  5.877},
     {150.0, 2.070e-9,  22.523},
     {200.0, 2.789e-10, 37.105},

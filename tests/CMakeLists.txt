@@ -28,6 +28,7 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(omma_tests
+    test_ascent.cpp
     test_console.cpp
     test_ffi.cpp
     test_drag.cpp

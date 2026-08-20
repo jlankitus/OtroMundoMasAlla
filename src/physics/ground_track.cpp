@@ -34,6 +34,24 @@ double horizonAngularRadius(double bodyRadius, double orbitRadius) noexcept {
     return std::acos(bodyRadius / orbitRadius);
 }
 
+Vec3 surfacePosition(const LatLon& site, double bodyRadius,
+                     double rotationAngle) noexcept {
+    const double inertialLongitude = site.longitudeRadians + rotationAngle;
+    const double cosLat = std::cos(site.latitudeRadians);
+    return Vec3{bodyRadius * cosLat * std::cos(inertialLongitude),
+                bodyRadius * cosLat * std::sin(inertialLongitude),
+                bodyRadius * std::sin(site.latitudeRadians)};
+}
+
+Vec3 surfaceVelocity(const Vec3& surfacePos, double siderealPeriodSeconds) noexcept {
+    if (!(siderealPeriodSeconds > 0.0)) {
+        return Vec3::zero();
+    }
+    const double omega = constants::kTwoPi / siderealPeriodSeconds;
+    // omega x r with omega = (0, 0, w).
+    return Vec3{-omega * surfacePos.y, omega * surfacePos.x, 0.0};
+}
+
 LatLon pointOnCircle(const LatLon& centre, double angularRadius,
                      double azimuth) noexcept {
     // Standard direct geodesic on a sphere.

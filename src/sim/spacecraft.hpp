@@ -12,6 +12,7 @@
 #include "core/epoch.hpp"
 #include "physics/orbital_elements.hpp"
 #include "physics/state_vector.hpp"
+#include "sim/ascent.hpp"
 
 #include <cstdint>
 #include <string>
@@ -88,6 +89,9 @@ struct Spacecraft {
 
     PropagationMode mode{PropagationMode::Integrated};
     ThrustCommand   thrust{};
+    /// The ascent autopilot, when this craft was launched from a surface.
+    /// Guidance writes to `thrust`; it never bypasses the physics.
+    AscentProgram   ascent{};
 
     // ── mass and propulsion ─────────────────────────────────────────────────
     /// Everything that is not propellant, kg.

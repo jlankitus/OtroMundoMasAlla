@@ -39,4 +39,16 @@ struct LatLon {
 [[nodiscard]] LatLon pointOnCircle(const LatLon& centre, double angularRadius,
                                    double azimuth) noexcept;
 
+/// The inverse of subsatellitePoint: the inertial position of a point fixed
+/// to the body's surface, given its lat/lon and the body's rotation angle.
+/// Round-trips with subsatellitePoint exactly; a launch pad is this point.
+[[nodiscard]] Vec3 surfacePosition(const LatLon& site, double bodyRadius,
+                                   double rotationAngle) noexcept;
+
+/// Inertial velocity of that surface point due to the body's rotation,
+/// omega x r with omega along +z. This is the free ride a launch site gives
+/// a rocket — 465 m/s eastward at Earth's equator, less at latitude.
+[[nodiscard]] Vec3 surfaceVelocity(const Vec3& surfacePos,
+                                   double siderealPeriodSeconds) noexcept;
+
 }  // namespace omma

@@ -4,6 +4,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 add_library(omma_sim
+    ascent.cpp
     scenario.cpp
     spacecraft.cpp
     world.cpp

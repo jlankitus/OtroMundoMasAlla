@@ -32,11 +32,22 @@ void World::step() {
     clock_.step();
     const double dt = clock_.fixedStepSeconds();
 
-    // 2/3. Integrate every craft. The gravity field is refreshed inside the
-    // integrator, once per stage, at the sub-step epochs RK4 asks for.
+    // 2/3. Guidance first, then physics: an ascending craft's autopilot
+    // writes its ThrustCommand for this step, and the integrator executes it
+    // exactly as it would a player's burn.
     for (Spacecraft& craft : spacecraft_) {
         if (craft.mode != PropagationMode::Integrated) {
             continue;
+        }
+        if (craft.ascent.active()) {
+            // The craft's state is from the END of the previous step, so the
+            // central body must be sampled at that same epoch (`before`), not
+            // at the already-advanced clock. The one-second skew is ~8 km of
+            // phantom relative position — irrelevant to a burn DIRECTION,
+            // fatal to guidance reading apsis MAGNITUDES from it.
+            const auto& central = *system_.bodies()[craft.centralBodyIndex];
+            advanceAscent(craft, craft.state.relativeTo(central.sample(before)),
+                          central, before);
         }
         integrateSpacecraft(craft, dt);
     }
@@ -69,7 +80,6 @@ void World::step() {
     // 6. Collisions last, against the state the craft actually ended up in.
     detectCollisions();
 
-    static_cast<void>(before);
 }
 
 void World::step(std::int64_t n) {
@@ -244,6 +254,52 @@ SpacecraftId World::launch(const LaunchRequest& request) {
     craft.crossSectionM2 = request.crossSectionM2;
     craft.centralBodyIndex = bodyIndex;
     craft.launchEpoch = clock_.now();
+    craft.id = SpacecraftId{static_cast<std::uint32_t>(spacecraft_.size()),
+                            nextGeneration_++};
+
+    spacecraft_.push_back(std::move(craft));
+    emit({SimEvent::Kind::Launched, spacecraft_.back().id, clock_.now(), bodyIndex,
+          spacecraft_.back().name});
+    return spacecraft_.back().id;
+}
+
+SpacecraftId World::launchFromSurface(BodyId body, const SurfaceLaunchRequest& request,
+                                      std::string name) {
+    const auto bodyIndex = static_cast<std::size_t>(body);
+    if (bodyIndex >= system_.size()) {
+        return SpacecraftId::invalid();
+    }
+    const auto& central = *system_.bodies()[bodyIndex];
+
+    // The pad: a point fixed to the rotating surface, 50 m up so the strict
+    // below-surface collision test never sees a resting vehicle as a crash.
+    // The rotation velocity comes free — 465 m/s eastward at Earth's equator —
+    // which is why real ranges launch east and why an eastward ascent here
+    // measurably spends less delta-v than a westward one.
+    const LatLon site{request.latitudeRadians, request.longitudeRadians};
+    const double rotation =
+        rotationAngleAt(central.siderealRotationPeriod(), clock_.now());
+    const Vec3 padPosition =
+        surfacePosition(site, central.meanRadius() + 50.0, rotation);
+    const StateVector pad{padPosition,
+                          surfaceVelocity(padPosition,
+                                          central.siderealRotationPeriod())};
+
+    Spacecraft craft{};
+    craft.name = std::move(name);
+    craft.state = central.sample(clock_.now()) + pad;
+    craft.dryMassKg = request.dryMassKg;
+    craft.propellantKg = request.propellantKg;
+    craft.maxThrustNewtons = request.maxThrustNewtons;
+    craft.exhaustVelocity = request.exhaustVelocityMps;
+    craft.dragCoefficient = request.dragCoefficient;
+    craft.crossSectionM2 = request.crossSectionM2;
+    craft.centralBodyIndex = bodyIndex;
+    craft.launchEpoch = clock_.now();
+    craft.ascent.phase = AscentProgram::Phase::Vertical;
+    craft.ascent.targetApoapsisRadius =
+        central.meanRadius() + request.targetAltitudeMetres;
+    craft.ascent.azimuthRadians = request.azimuthRadians;
     craft.id = SpacecraftId{static_cast<std::uint32_t>(spacecraft_.size()),
                             nextGeneration_++};
 
