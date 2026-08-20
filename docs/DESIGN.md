@@ -276,3 +276,60 @@ by tens of percent, which the first version of the test measured (1.67×,
 phase-independent) before the cause was understood. Testing at an altitude
 where the scale height dwarfs those effects validates the drag wiring
 without also testing altitude conventions.
+
+## 13. Ascent: guidance as a strategy over the player's own controls
+
+`launchFromSurface` puts a vehicle at rest on the rotating pad (position from
+the inverse ground-track math, velocity the ω×r the planet gives for free)
+and an autopilot flies it up. The load-bearing choice: **guidance writes to
+the same `ThrustCommand` the player's burn keys use** — one control path,
+one physics path — so gravity losses, drag losses and the eastward-launch
+bonus are never modelled; they emerge from the same integrator every
+satellite uses, and the tests measure them (the Δv bill lands in the real
+8–10.5 km/s band, and launching east is ~800 m/s cheaper than west).
+
+The program is the classic pre-PEG shape: open-loop where a schedule is
+adequate (vertical rise, a √-shaped pitch program), **closed-loop where the
+orbit actually matters** — MECO and circularization use linearized
+sensitivity guidance (`dApo/dv = 2a²v/μ` from vis-viva) commanded through
+the throttle, so a vehicle pulling 190 m/s² at burnout cuts off accurately
+instead of quantized to whole seconds. Five bugs were flown out of it, each
+found by a flight trace, none by inspection: a linear pitch schedule (45°
+nose-up at 34 km), the atmosphere table starting at 100 km (sea-level
+density 10× wrong — satellites never noticed, the first rocket did),
+satellite aero on a rocket, a circularization setpoint derived from a
+moving apoapsis the burn itself moved, and a one-second frame skew between
+the craft's state and the sampled central body (~8 km of phantom position —
+harmless to a burn *direction*, fatal to apsis *magnitudes*).
+
+## 14. Transfer windows: Hohmann first, honestly bounded
+
+`planHohmannTransfer` is the closed-form first rung — half-ellipse time of
+flight, required lead angle, v∞, and the injection burn with the Oberth
+term — validated against the numbers mission design courses drill. Two
+distinctions earned tests: window **rates use mean motion**, never today's
+radius (Mars' eccentricity swings its instantaneous rate 14%, which a
+400-day extrapolation turns into 43° of miss — measured by the planner's
+own self-check test, which warps to the window it names and demands the
+phase be right); and the folklore "44°" Earth→Mars angle is the mean-radii
+special case (at J2000, Mars near perihelion, the honest answer is 56°).
+Lambert and porkchop plots are the acknowledged next rung.
+
+## 15. Rendering at solar-system scale: three layers
+
+The Unity client renders the way real space software does:
+
+1. **Truth is double precision** in the C++ sim, in SI. Engine floats are
+   only ever a view.
+2. **Floating origin**: positions are focus-relative, subtracted in doubles
+   *before* narrowing to float, so the camera's subject sits at (0,0,0)
+   where float precision is thickest.
+3. **Scaled-space sky** (the KSP/Orbiter pattern): bodies beyond local
+   space draw on a fixed shell at their true direction and true angular
+   size (floored for findability). Nothing lies, nothing vanishes, and no
+   coordinate ever leaves float comfort.
+
+The failure that taught layer 3: culling distant bodies by disabling
+renderers left their transforms parked at the origin — nine planets
+"inside Earth" in the hierarchy. The rule that came out of it: **the
+transform always tells the truth; only the rendering is staged.**
