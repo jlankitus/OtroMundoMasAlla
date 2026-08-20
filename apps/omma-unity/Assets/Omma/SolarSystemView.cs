@@ -35,6 +35,9 @@ namespace Omma
         [Tooltip("Index into the warp ladder below at startup.")]
         public int warpIndex = 3;
 
+        [Tooltip("Fly one pad launch immediately on Play, no key needed.")]
+        public bool launchOnStart = false;
+
         private static readonly double[] WarpLadder =
             { 1, 60, 600, 3600, 21600, 86400, 604800 };
         private static readonly string[] WarpLabels =
@@ -122,6 +125,11 @@ namespace Omma
             _launchCamera.enabled = false;
 
             LogRoster();
+
+            if (launchOnStart)
+            {
+                DoPadLaunch();
+            }
         }
 
         private void OnDestroy()
@@ -236,18 +244,7 @@ namespace Omma
             if (Input.GetKey(KeyCode.L) && _launchCooldown <= 0f)
             {
                 _launchCooldown = 0.2f;
-                ++_launchCount;
-                var request = new OmmaSurfaceLaunchRequest
-                {
-                    name = $"U-{_launchCount}",
-                    bodyIndex = 3,
-                    latitudeRad = 0.4974,                       // the Cape
-                    longitudeRad = -1.4075 + 0.35 * (_launchCount % 18),
-                    targetAltitudeMetres = 200e3 + 15e3 * (_launchCount % 8),
-                    azimuthRad = 1.5708,
-                };
-                var id = _sim.LaunchAscent(ref request);
-                Debug.Log(id != 0 ? $"pad launch {request.name}" : "launch refused");
+                DoPadLaunch();
             }
 
             // T: the next Mars window for the newest craft, and the injection
@@ -284,6 +281,24 @@ namespace Omma
                 if (Input.GetKeyDown(KeyCode.Comma))
                     _sim.CommandDeltaV(id, BurnFrame.Retrograde, 10.0);
             }
+        }
+
+        /// One pad launch from the Cape, phased by count so a barrage fans
+        /// out. Shared by the L key and launchOnStart.
+        private void DoPadLaunch()
+        {
+            ++_launchCount;
+            var request = new OmmaSurfaceLaunchRequest
+            {
+                name = $"U-{_launchCount}",
+                bodyIndex = 3,
+                latitudeRad = 0.4974,                       // the Cape
+                longitudeRad = -1.4075 + 0.35 * (_launchCount % 18),
+                targetAltitudeMetres = 200e3 + 15e3 * (_launchCount % 8),
+                azimuthRad = 1.5708,
+            };
+            var id = _sim.LaunchAscent(ref request);
+            Debug.Log(id != 0 ? $"pad launch {request.name}" : "launch refused");
         }
 
         // ── cameras ─────────────────────────────────────────────────────────
